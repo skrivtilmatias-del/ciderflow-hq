@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker, Edit, Trash2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker, Edit, Trash2, AlertTriangle, CheckCircle2, Search, Filter, SortAsc } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
@@ -53,6 +54,9 @@ export default function Dashboard() {
     volume: '',
     start_date: ''
   });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [stageFilter, setStageFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState('newest');
 
   useEffect(() => {
     loadDashboardData();
@@ -135,6 +139,49 @@ export default function Dashboard() {
     navigate('/');
   }
 
+  const filteredAndSortedBatches = useMemo(() => {
+    let result = [...batches];
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(b => 
+        b.name.toLowerCase().includes(query) ||
+        b.variety.toLowerCase().includes(query)
+      );
+    }
+    
+    // Apply stage filter
+    if (stageFilter !== 'all') {
+      result = result.filter(b => b.current_stage === stageFilter);
+    }
+    
+    // Apply sorting
+    switch (sortBy) {
+      case 'newest':
+        result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        break;
+      case 'oldest':
+        result.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        break;
+      case 'name-asc':
+        result.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'name-desc':
+        result.sort((a, b) => b.name.localeCompare(a.name));
+        break;
+      case 'volume-high':
+        result.sort((a, b) => Number(b.volume) - Number(a.volume));
+        break;
+      case 'volume-low':
+        result.sort((a, b) => Number(a.volume) - Number(b.volume));
+        break;
+    }
+    
+    return result;
+  }, [batches, searchQuery, stageFilter, sortBy]);
+
+  const hasActiveFilters = searchQuery.trim() || stageFilter !== 'all' || sortBy !== 'newest';
   const totalVolume = batches.reduce((sum, batch) => sum + Number(batch.volume), 0);
   const activeBatches = batches.filter(b => b.current_stage !== 'bottled').length;
 
@@ -257,92 +304,193 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* New Batch Button & Form */}
-        <div className="mb-6">
-          {!showNewBatchForm ? (
-            <Button onClick={() => setShowNewBatchForm(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              New Batch
-            </Button>
-          ) : (
-            <div className="bg-card rounded-xl border p-6">
-              <h3 className="text-lg font-semibold mb-4">Create New Batch</h3>
-              <form onSubmit={handleCreateBatch} className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Batch Name</Label>
-                    <Input
-                      id="name"
-                      value={newBatch.name}
-                      onChange={(e) => setNewBatch({ ...newBatch, name: e.target.value })}
-                      placeholder="Fall 2024 Harvest"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="variety">Apple Variety</Label>
-                    <Input
-                      id="variety"
-                      value={newBatch.variety}
-                      onChange={(e) => setNewBatch({ ...newBatch, variety: e.target.value })}
-                      placeholder="Granny Smith, Honeycrisp..."
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="volume">Volume (liters)</Label>
-                    <Input
-                      id="volume"
-                      type="number"
-                      step="0.01"
-                      value={newBatch.volume}
-                      onChange={(e) => setNewBatch({ ...newBatch, volume: e.target.value })}
-                      placeholder="100"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="start_date">Start Date</Label>
-                    <Input
-                      id="start_date"
-                      type="date"
-                      value={newBatch.start_date}
-                      onChange={(e) => setNewBatch({ ...newBatch, start_date: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <Button type="submit">Create Batch</Button>
-                  <Button 
-                    type="button" 
-                    variant="outline"
-                    onClick={() => setShowNewBatchForm(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </form>
+        {/* Search, Filter & Sort Bar */}
+        <div className="space-y-4 mb-6">
+          {/* Filter Controls */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name or variety..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                  onClick={() => setSearchQuery('')}
+                >
+                  ×
+                </Button>
+              )}
             </div>
-          )}
+
+            {/* Stage Filter */}
+            <Select value={stageFilter} onValueChange={setStageFilter}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <Filter className="h-4 w-4 mr-2" />
+                <SelectValue placeholder="All Stages" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Stages</SelectItem>
+                <SelectItem value="pressing">Pressing</SelectItem>
+                <SelectItem value="fermenting">Fermenting</SelectItem>
+                <SelectItem value="aging">Aging</SelectItem>
+                <SelectItem value="bottled">Bottled</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Sort */}
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="w-full sm:w-[200px]">
+                <SortAsc className="h-4 w-4 mr-2" />
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest First</SelectItem>
+                <SelectItem value="oldest">Oldest First</SelectItem>
+                <SelectItem value="name-asc">Name (A-Z)</SelectItem>
+                <SelectItem value="name-desc">Name (Z-A)</SelectItem>
+                <SelectItem value="volume-high">Volume (High-Low)</SelectItem>
+                <SelectItem value="volume-low">Volume (Low-High)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Action Bar */}
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-muted-foreground">
+              {hasActiveFilters ? (
+                <>
+                  Showing {filteredAndSortedBatches.length} of {batches.length} batches
+                  <Button
+                    variant="link"
+                    size="sm"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setStageFilter('all');
+                      setSortBy('newest');
+                    }}
+                    className="ml-2"
+                  >
+                    Clear filters
+                  </Button>
+                </>
+              ) : (
+                `${batches.length} total batches`
+              )}
+            </div>
+
+            {!showNewBatchForm && (
+              <Button onClick={() => setShowNewBatchForm(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                New Batch
+              </Button>
+            )}
+          </div>
         </div>
 
+        {/* New Batch Form */}
+        {showNewBatchForm && (
+          <div className="bg-card rounded-xl border p-6 mb-6">
+            <h3 className="text-lg font-semibold mb-4">Create New Batch</h3>
+            <form onSubmit={handleCreateBatch} className="space-y-4">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Batch Name</Label>
+                  <Input
+                    id="name"
+                    value={newBatch.name}
+                    onChange={(e) => setNewBatch({ ...newBatch, name: e.target.value })}
+                    placeholder="Fall 2024 Harvest"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="variety">Apple Variety</Label>
+                  <Input
+                    id="variety"
+                    value={newBatch.variety}
+                    onChange={(e) => setNewBatch({ ...newBatch, variety: e.target.value })}
+                    placeholder="Granny Smith, Honeycrisp..."
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="volume">Volume (liters)</Label>
+                  <Input
+                    id="volume"
+                    type="number"
+                    step="0.01"
+                    value={newBatch.volume}
+                    onChange={(e) => setNewBatch({ ...newBatch, volume: e.target.value })}
+                    placeholder="100"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="start_date">Start Date</Label>
+                  <Input
+                    id="start_date"
+                    type="date"
+                    value={newBatch.start_date}
+                    onChange={(e) => setNewBatch({ ...newBatch, start_date: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <Button type="submit">Create Batch</Button>
+                <Button 
+                  type="button" 
+                  variant="outline"
+                  onClick={() => setShowNewBatchForm(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </div>
+        )}
+
         {/* Batches Table */}
-        {batches.length === 0 ? (
+        {filteredAndSortedBatches.length === 0 ? (
           <div className="bg-card rounded-xl border p-12 text-center">
             <Package className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No batches yet</h3>
+            <h3 className="text-lg font-semibold mb-2">
+              {hasActiveFilters ? 'No batches match your filters' : 'No batches yet'}
+            </h3>
             <p className="text-muted-foreground mb-4">
-              Create your first batch to start tracking your cider production
+              {hasActiveFilters 
+                ? 'Try adjusting your search or filter criteria'
+                : 'Create your first batch to start tracking your cider production'
+              }
             </p>
-            <Button onClick={() => setShowNewBatchForm(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create First Batch
-            </Button>
+            {hasActiveFilters ? (
+              <Button 
+                variant="outline"
+                onClick={() => {
+                  setSearchQuery('');
+                  setStageFilter('all');
+                  setSortBy('newest');
+                }}
+              >
+                Clear Filters
+              </Button>
+            ) : (
+              <Button onClick={() => setShowNewBatchForm(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Create First Batch
+              </Button>
+            )}
           </div>
         ) : (
           <div className="bg-card rounded-xl border overflow-hidden">
@@ -358,7 +506,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {batches.map((batch) => (
+                  {filteredAndSortedBatches.map((batch) => (
                     <tr 
                       key={batch.id} 
                       className="border-t hover:bg-muted/30 transition-colors cursor-pointer"
