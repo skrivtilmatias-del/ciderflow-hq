@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker, Edit, Trash2, AlertTriangle, CheckCircle2, Search, Filter, SortAsc } from 'lucide-react';
+import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker, Edit, Trash2, AlertTriangle, CheckCircle2, Search, Filter, SortAsc, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -57,6 +58,7 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState('newest');
+  const [operationLoading, setOperationLoading] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -93,6 +95,7 @@ export default function Dashboard() {
 
   async function handleCreateBatch(e: React.FormEvent) {
     e.preventDefault();
+    setOperationLoading('create');
     
     try {
       const { data, error } = await supabase
@@ -131,6 +134,8 @@ export default function Dashboard() {
         title: "Error",
         description: error.message || 'Failed to create batch',
       });
+    } finally {
+      setOperationLoading(null);
     }
   }
 
@@ -225,11 +230,43 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Loading...</p>
-        </div>
+      <div className="min-h-screen bg-background">
+        {/* Header */}
+        <header className="border-b bg-card">
+          <div className="container mx-auto px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Wine className="h-6 w-6 text-primary" />
+                  <span className="text-xl font-bold">CiderTrack</span>
+                </div>
+                <div className="text-muted-foreground">|</div>
+                <Skeleton className="h-6 w-32" />
+              </div>
+              <Skeleton className="h-10 w-24" />
+            </div>
+          </div>
+        </header>
+
+        <main className="container mx-auto px-6 py-8">
+          {/* Stats Skeletons */}
+          <div className="grid md:grid-cols-3 gap-6 mb-8">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="bg-card rounded-xl border p-6">
+                <Skeleton className="h-4 w-32 mb-4" />
+                <Skeleton className="h-10 w-20" />
+              </div>
+            ))}
+          </div>
+
+          {/* Table Skeleton */}
+          <div className="bg-card rounded-xl border p-6 space-y-4">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        </main>
       </div>
     );
   }
@@ -447,16 +484,25 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="flex gap-3">
-                <Button type="submit">Create Batch</Button>
-                <Button 
-                  type="button" 
-                  variant="outline"
-                  onClick={() => setShowNewBatchForm(false)}
-                >
-                  Cancel
-                </Button>
-              </div>
+                <div className="flex gap-3">
+                  <Button type="submit" disabled={loading || operationLoading === 'create'}>
+                    {operationLoading === 'create' ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Creating...
+                      </>
+                    ) : (
+                      'Create Batch'
+                    )}
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline"
+                    onClick={() => setShowNewBatchForm(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
             </form>
           </div>
         )}
@@ -618,6 +664,7 @@ export default function Dashboard() {
 
                   <Button 
                     onClick={async () => {
+                      setOperationLoading(selectedBatch.id);
                       try {
                         const { error } = await supabase
                           .from('batches')
@@ -656,12 +703,24 @@ export default function Dashboard() {
                           title: "Error",
                           description: error.message,
                         });
+                      } finally {
+                        setOperationLoading(null);
                       }
                     }}
+                    disabled={operationLoading === selectedBatch.id}
                     className="w-full"
                   >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Save Changes
+                    {operationLoading === selectedBatch.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Edit className="h-4 w-4 mr-2" />
+                        Save Changes
+                      </>
+                    )}
                   </Button>
                 </div>
               </TabsContent>
@@ -682,33 +741,63 @@ export default function Dashboard() {
                     {selectedBatch.current_stage === 'pressing' && (
                       <Button 
                         onClick={async () => {
+                          setOperationLoading(selectedBatch.id);
                           await updateBatchStage(selectedBatch.id, 'fermenting');
+                          setOperationLoading(null);
                         }}
+                        disabled={operationLoading === selectedBatch.id}
                         className="w-full"
                       >
-                        Move to Fermenting →
+                        {operationLoading === selectedBatch.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Updating...
+                          </>
+                        ) : (
+                          'Move to Fermenting →'
+                        )}
                       </Button>
                     )}
 
                     {selectedBatch.current_stage === 'fermenting' && (
                       <Button 
                         onClick={async () => {
+                          setOperationLoading(selectedBatch.id);
                           await updateBatchStage(selectedBatch.id, 'aging');
+                          setOperationLoading(null);
                         }}
+                        disabled={operationLoading === selectedBatch.id}
                         className="w-full"
                       >
-                        Move to Aging →
+                        {operationLoading === selectedBatch.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Updating...
+                          </>
+                        ) : (
+                          'Move to Aging →'
+                        )}
                       </Button>
                     )}
 
                     {selectedBatch.current_stage === 'aging' && (
                       <Button 
                         onClick={async () => {
+                          setOperationLoading(selectedBatch.id);
                           await updateBatchStage(selectedBatch.id, 'bottled');
+                          setOperationLoading(null);
                         }}
+                        disabled={operationLoading === selectedBatch.id}
                         className="w-full"
                       >
-                        Move to Bottled →
+                        {operationLoading === selectedBatch.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Updating...
+                          </>
+                        ) : (
+                          'Move to Bottled →'
+                        )}
                       </Button>
                     )}
 
