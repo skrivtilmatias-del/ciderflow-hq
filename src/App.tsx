@@ -9,6 +9,7 @@ import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
 import Onboarding from "./pages/Onboarding";
 import Dashboard from "./pages/Dashboard";
+import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -102,6 +103,14 @@ const App = () => {
               element={
                 user 
                   ? (hasOrganization ? <Dashboard /> : <Navigate to="/onboarding" />) 
+                  : <Navigate to="/auth" />
+              } 
+            />
+            <Route 
+              path="/settings" 
+              element={
+                user 
+                  ? (hasOrganization ? <Settings /> : <Navigate to="/onboarding" />) 
                   : <Navigate to="/auth" />
               } 
             />

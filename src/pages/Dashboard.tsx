@@ -260,7 +260,7 @@ export default function Dashboard() {
               <Button 
                 variant="outline" 
                 size="icon"
-                onClick={() => toast({ title: "Coming soon!", description: "Settings feature is under development." })}
+                onClick={() => navigate('/settings')}
               >
                 <Settings className="h-4 w-4" />
               </Button>
