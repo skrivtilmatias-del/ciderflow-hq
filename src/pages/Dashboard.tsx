@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker } from 'lucide-react';
+import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker, Edit, Trash2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
@@ -40,6 +43,15 @@ export default function Dashboard() {
     variety: '',
     volume: '',
     start_date: new Date().toISOString().split('T')[0]
+  });
+  const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    variety: '',
+    volume: '',
+    start_date: ''
   });
 
   useEffect(() => {
@@ -135,6 +147,34 @@ export default function Dashboard() {
       default: return 'default';
     }
   };
+
+  async function updateBatchStage(batchId: string, newStage: string) {
+    try {
+      const { error } = await supabase
+        .from('batches')
+        .update({ current_stage: newStage })
+        .eq('id', batchId)
+        .eq('organization_id', organization!.id);
+
+      if (error) throw error;
+
+      setBatches(batches.map(b => 
+        b.id === batchId ? { ...b, current_stage: newStage } : b
+      ));
+      setSelectedBatch(prev => prev ? { ...prev, current_stage: newStage } : null);
+
+      toast({
+        title: "Stage updated!",
+        description: `Batch moved to ${newStage}.`,
+      });
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error.message,
+      });
+    }
+  }
 
   if (loading) {
     return (
@@ -319,7 +359,20 @@ export default function Dashboard() {
                 </thead>
                 <tbody>
                   {batches.map((batch) => (
-                    <tr key={batch.id} className="border-t hover:bg-muted/30 transition-colors">
+                    <tr 
+                      key={batch.id} 
+                      className="border-t hover:bg-muted/30 transition-colors cursor-pointer"
+                      onClick={() => {
+                        setSelectedBatch(batch);
+                        setEditFormData({
+                          name: batch.name,
+                          variety: batch.variety,
+                          volume: batch.volume.toString(),
+                          start_date: batch.start_date
+                        });
+                        setBatchDialogOpen(true);
+                      }}
+                    >
                       <td className="p-4 font-medium">{batch.name}</td>
                       <td className="p-4 text-muted-foreground">{batch.variety}</td>
                       <td className="p-4">{Number(batch.volume).toFixed(1)} L</td>
@@ -339,6 +392,271 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+
+      {/* Batch Details Dialog */}
+      <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Batch Details</DialogTitle>
+            <DialogDescription>
+              View and manage {selectedBatch?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBatch && (
+            <Tabs defaultValue="details" className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="stage">Update Stage</TabsTrigger>
+                <TabsTrigger value="danger">Danger Zone</TabsTrigger>
+              </TabsList>
+
+              {/* DETAILS TAB */}
+              <TabsContent value="details" className="space-y-4">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-name">Batch Name</Label>
+                    <Input
+                      id="edit-name"
+                      value={editFormData.name}
+                      onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-variety">Apple Variety</Label>
+                    <Input
+                      id="edit-variety"
+                      value={editFormData.variety}
+                      onChange={(e) => setEditFormData({ ...editFormData, variety: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-volume">Volume (liters)</Label>
+                      <Input
+                        id="edit-volume"
+                        type="number"
+                        step="0.01"
+                        value={editFormData.volume}
+                        onChange={(e) => setEditFormData({ ...editFormData, volume: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-date">Start Date</Label>
+                      <Input
+                        id="edit-date"
+                        type="date"
+                        value={editFormData.start_date}
+                        onChange={(e) => setEditFormData({ ...editFormData, start_date: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-muted p-4 rounded-lg space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Current Stage:</span>
+                      <Badge variant={getStageColor(selectedBatch.current_stage)}>
+                        {selectedBatch.current_stage}
+                      </Badge>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Created:</span>
+                      <span className="text-sm">{format(new Date(selectedBatch.created_at), 'PPP')}</span>
+                    </div>
+                  </div>
+
+                  <Button 
+                    onClick={async () => {
+                      try {
+                        const { error } = await supabase
+                          .from('batches')
+                          .update({
+                            name: editFormData.name,
+                            variety: editFormData.variety,
+                            volume: parseFloat(editFormData.volume),
+                            start_date: editFormData.start_date
+                          })
+                          .eq('id', selectedBatch.id)
+                          .eq('organization_id', organization!.id);
+
+                        if (error) throw error;
+
+                        setBatches(batches.map(b => 
+                          b.id === selectedBatch.id 
+                            ? { 
+                                ...b, 
+                                name: editFormData.name,
+                                variety: editFormData.variety,
+                                volume: parseFloat(editFormData.volume),
+                                start_date: editFormData.start_date
+                              } 
+                            : b
+                        ));
+
+                        toast({
+                          title: "Batch updated!",
+                          description: "Your changes have been saved.",
+                        });
+
+                        setBatchDialogOpen(false);
+                      } catch (error: any) {
+                        toast({
+                          variant: "destructive",
+                          title: "Error",
+                          description: error.message,
+                        });
+                      }
+                    }}
+                    className="w-full"
+                  >
+                    <Edit className="h-4 w-4 mr-2" />
+                    Save Changes
+                  </Button>
+                </div>
+              </TabsContent>
+
+              {/* STAGE TAB */}
+              <TabsContent value="stage" className="space-y-4">
+                <div className="space-y-4">
+                  <div className="bg-muted p-4 rounded-lg">
+                    <p className="text-sm text-muted-foreground mb-2">Current Stage:</p>
+                    <Badge variant={getStageColor(selectedBatch.current_stage)} className="text-base">
+                      {selectedBatch.current_stage}
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Progress this batch to the next stage:</p>
+                    
+                    {selectedBatch.current_stage === 'pressing' && (
+                      <Button 
+                        onClick={async () => {
+                          await updateBatchStage(selectedBatch.id, 'fermenting');
+                        }}
+                        className="w-full"
+                      >
+                        Move to Fermenting →
+                      </Button>
+                    )}
+
+                    {selectedBatch.current_stage === 'fermenting' && (
+                      <Button 
+                        onClick={async () => {
+                          await updateBatchStage(selectedBatch.id, 'aging');
+                        }}
+                        className="w-full"
+                      >
+                        Move to Aging →
+                      </Button>
+                    )}
+
+                    {selectedBatch.current_stage === 'aging' && (
+                      <Button 
+                        onClick={async () => {
+                          await updateBatchStage(selectedBatch.id, 'bottled');
+                        }}
+                        className="w-full"
+                      >
+                        Move to Bottled →
+                      </Button>
+                    )}
+
+                    {selectedBatch.current_stage === 'bottled' && (
+                      <div className="flex items-center gap-2 p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
+                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+                        <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                          This batch is complete!
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-muted/50 p-4 rounded-lg space-y-1">
+                    <p className="text-sm font-medium">Production Stages:</p>
+                    <div className="text-sm text-muted-foreground space-y-1">
+                      <p>1. Pressing → Juice extraction</p>
+                      <p>2. Fermenting → Primary fermentation</p>
+                      <p>3. Aging → Maturation and flavor development</p>
+                      <p>4. Bottled → Ready for distribution</p>
+                    </div>
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* DANGER ZONE TAB */}
+              <TabsContent value="danger" className="space-y-4">
+                <div className="border border-destructive/50 rounded-lg p-6 space-y-4 bg-destructive/5">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
+                    <div>
+                      <h4 className="font-semibold text-destructive">Delete Batch</h4>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Permanently remove this batch from your production records. This action cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+
+                  <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="destructive" className="w-full">
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Batch
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will permanently delete <strong>{selectedBatch.name}</strong> and remove all associated data. 
+                          This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={async () => {
+                            try {
+                              const { error } = await supabase
+                                .from('batches')
+                                .delete()
+                                .eq('id', selectedBatch.id)
+                                .eq('organization_id', organization!.id);
+
+                              if (error) throw error;
+
+                              setBatches(batches.filter(b => b.id !== selectedBatch.id));
+
+                              toast({
+                                title: "Batch deleted",
+                                description: `${selectedBatch.name} has been removed.`,
+                              });
+
+                              setBatchDialogOpen(false);
+                              setDeleteDialogOpen(false);
+                            } catch (error: any) {
+                              toast({
+                                variant: "destructive",
+                                title: "Error",
+                                description: error.message,
+                              });
+                            }
+                          }}
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              </TabsContent>
+            </Tabs>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
