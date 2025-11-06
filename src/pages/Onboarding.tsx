@@ -35,7 +35,8 @@ export default function Onboarding() {
         .insert([
           {
             name: orgData.name,
-            owner_id: user.id
+            owner_id: user.id,
+            team_size: orgData.size
           }
         ])
         .select()
@@ -62,11 +63,12 @@ export default function Onboarding() {
       });
 
       navigate('/dashboard');
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create organization';
       toast({
         variant: "destructive",
         title: "Error",
-        description: error.message || 'Failed to create organization',
+        description: message,
       });
     } finally {
       setLoading(false);

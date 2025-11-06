@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker, Edit, Trash2, AlertTriangle, CheckCircle2, Search, Filter, SortAsc, Loader2 } from 'lucide-react';
@@ -13,130 +13,339 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { User } from '@supabase/supabase-js';
+import type { Tables, TablesInsert, TablesUpdate } from '@/integrations/supabase/types';
 
-type Batch = {
-  id: string;
-  name: string;
-  variety: string;
-  volume: number;
-  current_stage: string;
-  start_date: string;
-  created_at: string;
-  created_by: string;
-  organization_id: string;
-  updated_at: string;
+type BatchRow = Tables<'batches'>;
+type BatchStage = 'pressing' | 'fermenting' | 'aging' | 'bottled';
+type Batch = Omit<BatchRow, 'current_stage'> & { current_stage: BatchStage };
+
+type Organization = Tables<'organizations'>;
+
+type MemberRole = 'owner' | 'admin' | 'member';
+
+type OrganizationMembership = Tables<'organization_members'> & {
+  organizations: Organization;
 };
 
-type Organization = {
-  id: string;
+type BatchFormState = {
   name: string;
+  variety: string;
+  volume: number | '';
+  start_date: string;
 };
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [user, setUser] = useState<any>(null);
-  const [organization, setOrganization] = useState<Organization | null>(null);
-  const [batches, setBatches] = useState<Batch[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const {
+    data: user,
+    isLoading: userLoading,
+    error: userError,
+  } = useQuery<User | null>({
+    queryKey: ['auth-user'],
+    queryFn: async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) throw error;
+      return data.user;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const {
+    data: membership,
+    isLoading: membershipLoading,
+    error: membershipError,
+  } = useQuery<(OrganizationMembership & { role: MemberRole }) | null>({
+    queryKey: ['organization-membership', user?.id],
+    enabled: Boolean(user?.id),
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data, error } = await supabase
+        .from('organization_members')
+        .select('organization_id, role, organizations(*)')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) return null;
+
+      return {
+        ...data,
+        role: (data.role as MemberRole) ?? 'member',
+        organizations: data.organizations as Organization,
+      };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const organization = membership?.organizations ?? null;
+  const organizationId = organization?.id;
+
+  const {
+    data: batchesData,
+    isLoading: batchesLoading,
+    error: batchesError,
+  } = useQuery<BatchRow[]>({
+    queryKey: ['batches', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: async () => {
+      if (!organizationId) return [];
+      const { data, error } = await supabase
+        .from('batches')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    },
+    staleTime: 30 * 1000,
+  });
+
+  const batches: Batch[] = useMemo(
+    () => (batchesData ?? []).map(batch => ({
+      ...batch,
+      current_stage: batch.current_stage as BatchStage,
+    })),
+    [batchesData]
+  );
+
   const [showNewBatchForm, setShowNewBatchForm] = useState(false);
-  const [newBatch, setNewBatch] = useState({
+  const [newBatch, setNewBatch] = useState<BatchFormState>({
     name: '',
     variety: '',
     volume: '',
-    start_date: new Date().toISOString().split('T')[0]
+    start_date: new Date().toISOString().split('T')[0],
   });
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
   const [batchDialogOpen, setBatchDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [editFormData, setEditFormData] = useState({
+  const [editFormData, setEditFormData] = useState<BatchFormState>({
     name: '',
     variety: '',
     volume: '',
-    start_date: ''
+    start_date: '',
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [stageFilter, setStageFilter] = useState<string>('all');
+  const [stageFilter, setStageFilter] = useState<'all' | BatchStage>('all');
   const [sortBy, setSortBy] = useState('newest');
   const [operationLoading, setOperationLoading] = useState<string | null>(null);
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
-
-  async function loadDashboardData() {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-
-      const { data: memberData } = await supabase
-        .from('organization_members')
-        .select('organization_id, organizations(*)')
-        .eq('user_id', user!.id)
-        .single();
-
-      if (memberData) {
-        setOrganization(memberData.organizations as any);
-
-        const { data: batchesData } = await supabase
-          .from('batches')
-          .select('*')
-          .eq('organization_id', memberData.organization_id)
-          .order('created_at', { ascending: false });
-
-        setBatches(batchesData || []);
-      }
-    } catch (error) {
-      console.error('Error loading dashboard:', error);
-    } finally {
-      setLoading(false);
+    const error = userError ?? membershipError ?? batchesError;
+    if (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load data';
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: message,
+      });
     }
-  }
+  }, [userError, membershipError, batchesError, toast]);
 
-  async function handleCreateBatch(e: React.FormEvent) {
-    e.preventDefault();
-    setOperationLoading('create');
-    
-    try {
+  const stageTransitions: Record<BatchStage, { nextStage: BatchStage; label: string } | null> = {
+    pressing: { nextStage: 'fermenting', label: 'Move to Fermenting →' },
+    fermenting: { nextStage: 'aging', label: 'Move to Aging →' },
+    aging: { nextStage: 'bottled', label: 'Move to Bottled →' },
+    bottled: null,
+  };
+
+  const createBatchMutation = useMutation<BatchRow, Error, TablesInsert<'batches'>>({
+    mutationFn: async (payload) => {
       const { data, error } = await supabase
         .from('batches')
-        .insert([
-          {
-            ...newBatch,
-            volume: parseFloat(newBatch.volume),
-            organization_id: organization!.id,
-            current_stage: 'pressing',
-            created_by: user!.id
-          }
-        ])
+        .insert([payload])
         .select()
         .single();
 
       if (error) throw error;
+      return data as BatchRow;
+    },
+    onMutate: () => setOperationLoading('create'),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData<BatchRow[]>(['batches', variables.organization_id], (old) =>
+        old ? [data, ...old] : [data]
+      );
 
-      setBatches([data, ...batches]);
-      
+      toast({
+        title: 'Batch created!',
+        description: `${data.name} has been added to your production.`,
+      });
+
       setShowNewBatchForm(false);
       setNewBatch({
         name: '',
         variety: '',
         volume: '',
-        start_date: new Date().toISOString().split('T')[0]
+        start_date: new Date().toISOString().split('T')[0],
       });
-
+    },
+    onError: (error) => {
       toast({
-        title: "Batch created!",
-        description: `${data.name} has been added to your production.`,
-      });
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Error",
+        variant: 'destructive',
+        title: 'Error',
         description: error.message || 'Failed to create batch',
       });
-    } finally {
-      setOperationLoading(null);
+    },
+    onSettled: () => setOperationLoading(null),
+  });
+
+  const updateBatchMutation = useMutation<BatchRow, Error, {
+    batchId: string;
+    organizationId: string;
+    updates: Pick<TablesUpdate<'batches'>, 'name' | 'variety' | 'volume' | 'start_date'>;
+  }>({
+    mutationFn: async ({ batchId, organizationId, updates }) => {
+      const { data, error } = await supabase
+        .from('batches')
+        .update(updates)
+        .eq('id', batchId)
+        .eq('organization_id', organizationId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as BatchRow;
+    },
+    onMutate: ({ batchId }) => setOperationLoading(batchId),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData<BatchRow[]>(['batches', variables.organizationId], (old) =>
+        old ? old.map((batch) => (batch.id === data.id ? data : batch)) : [data]
+      );
+
+      setSelectedBatch((prev) => (prev && prev.id === data.id ? { ...prev, ...data, current_stage: data.current_stage as BatchStage } : prev));
+
+      toast({
+        title: 'Batch updated!',
+        description: 'Your changes have been saved.',
+      });
+
+      setBatchDialogOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    },
+    onSettled: () => setOperationLoading(null),
+  });
+
+  const updateStageMutation = useMutation<{ batchId: string; newStage: BatchStage }, Error, {
+    batchId: string;
+    organizationId: string;
+    newStage: BatchStage;
+  }>({
+    mutationFn: async ({ batchId, organizationId, newStage }) => {
+      const { error } = await supabase
+        .from('batches')
+        .update({ current_stage: newStage })
+        .eq('id', batchId)
+        .eq('organization_id', organizationId);
+
+      if (error) throw error;
+      return { batchId, newStage };
+    },
+    onMutate: ({ batchId }) => setOperationLoading(batchId),
+    onSuccess: ({ batchId, newStage }, variables) => {
+      queryClient.setQueryData<BatchRow[]>(['batches', variables.organizationId], (old) =>
+        old
+          ? old.map((batch) =>
+              batch.id === batchId
+                ? { ...batch, current_stage: newStage }
+                : batch
+            )
+          : old
+      );
+
+      setSelectedBatch((prev) => (prev && prev.id === batchId ? { ...prev, current_stage: newStage } : prev));
+
+      toast({
+        title: 'Stage updated!',
+        description: `Batch moved to ${newStage}.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    },
+    onSettled: () => setOperationLoading(null),
+  });
+
+  const deleteBatchMutation = useMutation<string, Error, { batchId: string; organizationId: string; batchName?: string }>({
+    mutationFn: async ({ batchId, organizationId }) => {
+      const { error } = await supabase
+        .from('batches')
+        .delete()
+        .eq('id', batchId)
+        .eq('organization_id', organizationId);
+
+      if (error) throw error;
+      return batchId;
+    },
+    onMutate: ({ batchId }) => setOperationLoading(batchId),
+    onSuccess: (batchId, variables) => {
+      queryClient.setQueryData<BatchRow[]>(['batches', variables.organizationId], (old) =>
+        old ? old.filter((batch) => batch.id !== batchId) : []
+      );
+
+      toast({
+        title: 'Batch deleted',
+        description: `${variables.batchName ?? 'The batch'} has been removed.`,
+      });
+
+      setBatchDialogOpen(false);
+      setDeleteDialogOpen(false);
+      setSelectedBatch(null);
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    },
+    onSettled: () => setOperationLoading(null),
+  });
+
+  function handleCreateBatch(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!user?.id || !organizationId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Organization context is missing.',
+      });
+      return;
     }
+
+    if (typeof newBatch.volume !== 'number' || !Number.isFinite(newBatch.volume)) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid volume',
+        description: 'Please enter a valid numeric volume for the batch.',
+      });
+      return;
+    }
+
+    createBatchMutation.mutate({
+      name: newBatch.name,
+      variety: newBatch.variety,
+      volume: newBatch.volume,
+      organization_id: organizationId,
+      current_stage: 'pressing',
+      start_date: newBatch.start_date,
+      created_by: user.id,
+    });
   }
 
   async function handleSignOut() {
@@ -144,24 +353,23 @@ export default function Dashboard() {
     navigate('/');
   }
 
+  const isLoading = userLoading || membershipLoading || (Boolean(organizationId) && batchesLoading);
+
   const filteredAndSortedBatches = useMemo(() => {
     let result = [...batches];
-    
-    // Apply search filter
+
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      result = result.filter(b => 
-        b.name.toLowerCase().includes(query) ||
-        b.variety.toLowerCase().includes(query)
+      result = result.filter((batch) =>
+        batch.name.toLowerCase().includes(query) ||
+        batch.variety.toLowerCase().includes(query)
       );
     }
-    
-    // Apply stage filter
+
     if (stageFilter !== 'all') {
-      result = result.filter(b => b.current_stage === stageFilter);
+      result = result.filter((batch) => batch.current_stage === stageFilter);
     }
-    
-    // Apply sorting
+
     switch (sortBy) {
       case 'newest':
         result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -176,59 +384,48 @@ export default function Dashboard() {
         result.sort((a, b) => b.name.localeCompare(a.name));
         break;
       case 'volume-high':
-        result.sort((a, b) => Number(b.volume) - Number(a.volume));
+        result.sort((a, b) => b.volume - a.volume);
         break;
       case 'volume-low':
-        result.sort((a, b) => Number(a.volume) - Number(b.volume));
+        result.sort((a, b) => a.volume - b.volume);
         break;
     }
-    
+
     return result;
   }, [batches, searchQuery, stageFilter, sortBy]);
 
   const hasActiveFilters = searchQuery.trim() || stageFilter !== 'all' || sortBy !== 'newest';
-  const totalVolume = batches.reduce((sum, batch) => sum + Number(batch.volume), 0);
-  const activeBatches = batches.filter(b => b.current_stage !== 'bottled').length;
+  const totalVolume = batches.reduce((sum, batch) => sum + batch.volume, 0);
+  const activeBatches = batches.filter((batch) => batch.current_stage !== 'bottled').length;
 
-  const getStageColor = (stage: string) => {
+  const getStageColor = (stage: BatchStage) => {
     switch (stage) {
-      case 'pressing': return 'default';
-      case 'fermenting': return 'secondary';
-      case 'aging': return 'outline';
-      case 'bottled': return 'default';
-      default: return 'default';
+      case 'pressing':
+        return 'default';
+      case 'fermenting':
+        return 'secondary';
+      case 'aging':
+        return 'outline';
+      case 'bottled':
+      default:
+        return 'default';
     }
   };
 
-  async function updateBatchStage(batchId: string, newStage: string) {
-    try {
-      const { error } = await supabase
-        .from('batches')
-        .update({ current_stage: newStage })
-        .eq('id', batchId)
-        .eq('organization_id', organization!.id);
-
-      if (error) throw error;
-
-      setBatches(batches.map(b => 
-        b.id === batchId ? { ...b, current_stage: newStage } : b
-      ));
-      setSelectedBatch(prev => prev ? { ...prev, current_stage: newStage } : null);
-
+  function handleUpdateBatchStage(batchId: string, newStage: BatchStage) {
+    if (!organizationId) {
       toast({
-        title: "Stage updated!",
-        description: `Batch moved to ${newStage}.`,
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Organization context is missing.',
       });
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message,
-      });
+      return;
     }
+
+    updateStageMutation.mutate({ batchId, newStage, organizationId });
   }
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
         {/* Header */}
@@ -267,6 +464,29 @@ export default function Dashboard() {
             <Skeleton className="h-10 w-full" />
           </div>
         </main>
+      </div>
+    );
+  }
+
+  if (!organization) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6 text-center space-y-4">
+        <Wine className="h-10 w-10 text-primary" />
+        <h1 className="text-2xl font-semibold">No organization found</h1>
+        <p className="text-muted-foreground max-w-sm">
+          We couldn't find an organization associated with your account. Create one to start tracking your cider production.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button onClick={() => navigate('/onboarding')}>
+            Create organization
+          </Button>
+          <Button variant="outline" onClick={async () => {
+            await supabase.auth.signOut();
+            navigate('/');
+          }}>
+            Sign out
+          </Button>
+        </div>
       </div>
     );
   }
@@ -367,7 +587,7 @@ export default function Dashboard() {
             </div>
 
             {/* Stage Filter */}
-            <Select value={stageFilter} onValueChange={setStageFilter}>
+            <Select value={stageFilter} onValueChange={(value) => setStageFilter(value as 'all' | BatchStage)}>
               <SelectTrigger className="w-full sm:w-[180px]">
                 <Filter className="h-4 w-4 mr-2" />
                 <SelectValue placeholder="All Stages" />
@@ -465,8 +685,18 @@ export default function Dashboard() {
                     id="volume"
                     type="number"
                     step="0.01"
-                    value={newBatch.volume}
-                    onChange={(e) => setNewBatch({ ...newBatch, volume: e.target.value })}
+                    value={newBatch.volume === '' ? '' : newBatch.volume}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '') {
+                        setNewBatch({ ...newBatch, volume: '' });
+                        return;
+                      }
+                      const parsed = Number(value);
+                      if (Number.isFinite(parsed)) {
+                        setNewBatch({ ...newBatch, volume: parsed });
+                      }
+                    }}
                     placeholder="100"
                     required
                   />
@@ -485,8 +715,8 @@ export default function Dashboard() {
               </div>
 
                 <div className="flex gap-3">
-                  <Button type="submit" disabled={loading || operationLoading === 'create'}>
-                    {operationLoading === 'create' ? (
+                  <Button type="submit" disabled={createBatchMutation.isPending}>
+                    {createBatchMutation.isPending ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
                         Creating...
@@ -558,18 +788,18 @@ export default function Dashboard() {
                       className="border-t hover:bg-muted/30 transition-colors cursor-pointer"
                       onClick={() => {
                         setSelectedBatch(batch);
-                        setEditFormData({
-                          name: batch.name,
-                          variety: batch.variety,
-                          volume: batch.volume.toString(),
-                          start_date: batch.start_date
-                        });
+                          setEditFormData({
+                            name: batch.name,
+                            variety: batch.variety,
+                            volume: batch.volume,
+                            start_date: batch.start_date,
+                          });
                         setBatchDialogOpen(true);
                       }}
                     >
                       <td className="p-4 font-medium">{batch.name}</td>
                       <td className="p-4 text-muted-foreground">{batch.variety}</td>
-                      <td className="p-4">{Number(batch.volume).toFixed(1)} L</td>
+                        <td className="p-4">{batch.volume.toFixed(1)} L</td>
                       <td className="p-4">
                         <Badge variant={getStageColor(batch.current_stage)}>
                           {batch.current_stage}
@@ -633,8 +863,19 @@ export default function Dashboard() {
                         id="edit-volume"
                         type="number"
                         step="0.01"
-                        value={editFormData.volume}
-                        onChange={(e) => setEditFormData({ ...editFormData, volume: e.target.value })}
+                        value={editFormData.volume === '' ? '' : editFormData.volume}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (value === "") {
+                            setEditFormData({ ...editFormData, volume: '' });
+                            return;
+                          }
+
+                          const parsed = Number(value);
+                          if (Number.isFinite(parsed)) {
+                            setEditFormData({ ...editFormData, volume: parsed });
+                          }
+                        }}
                       />
                     </div>
 
@@ -662,50 +903,36 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <Button 
-                    onClick={async () => {
-                      setOperationLoading(selectedBatch.id);
-                      try {
-                        const { error } = await supabase
-                          .from('batches')
-                          .update({
-                            name: editFormData.name,
-                            variety: editFormData.variety,
-                            volume: parseFloat(editFormData.volume),
-                            start_date: editFormData.start_date
-                          })
-                          .eq('id', selectedBatch.id)
-                          .eq('organization_id', organization!.id);
-
-                        if (error) throw error;
-
-                        setBatches(batches.map(b => 
-                          b.id === selectedBatch.id 
-                            ? { 
-                                ...b, 
-                                name: editFormData.name,
-                                variety: editFormData.variety,
-                                volume: parseFloat(editFormData.volume),
-                                start_date: editFormData.start_date
-                              } 
-                            : b
-                        ));
-
+                  <Button
+                    onClick={() => {
+                      if (!organizationId) {
                         toast({
-                          title: "Batch updated!",
-                          description: "Your changes have been saved.",
+                          variant: 'destructive',
+                          title: 'Error',
+                          description: 'Organization context is missing.',
                         });
-
-                        setBatchDialogOpen(false);
-                      } catch (error: any) {
-                        toast({
-                          variant: "destructive",
-                          title: "Error",
-                          description: error.message,
-                        });
-                      } finally {
-                        setOperationLoading(null);
+                        return;
                       }
+
+                      if (typeof editFormData.volume !== 'number' || !Number.isFinite(editFormData.volume)) {
+                        toast({
+                          variant: 'destructive',
+                          title: 'Invalid volume',
+                          description: 'Please enter a valid numeric volume for the batch.',
+                        });
+                        return;
+                      }
+
+                      updateBatchMutation.mutate({
+                        batchId: selectedBatch.id,
+                        organizationId,
+                        updates: {
+                          name: editFormData.name,
+                          variety: editFormData.variety,
+                          volume: editFormData.volume,
+                          start_date: editFormData.start_date,
+                        },
+                      });
                     }}
                     disabled={operationLoading === selectedBatch.id}
                     className="w-full"
@@ -738,77 +965,36 @@ export default function Dashboard() {
                   <div className="space-y-2">
                     <p className="text-sm font-medium">Progress this batch to the next stage:</p>
                     
-                    {selectedBatch.current_stage === 'pressing' && (
-                      <Button 
-                        onClick={async () => {
-                          setOperationLoading(selectedBatch.id);
-                          await updateBatchStage(selectedBatch.id, 'fermenting');
-                          setOperationLoading(null);
-                        }}
-                        disabled={operationLoading === selectedBatch.id}
-                        className="w-full"
-                      >
-                        {operationLoading === selectedBatch.id ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Updating...
-                          </>
-                        ) : (
-                          'Move to Fermenting →'
-                        )}
-                      </Button>
-                    )}
+                    {(() => {
+                      const transition = stageTransitions[selectedBatch.current_stage];
+                      if (!transition) {
+                        return (
+                          <div className="flex items-center gap-2 p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
+                            <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+                            <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                              This batch is complete!
+                            </p>
+                          </div>
+                        );
+                      }
 
-                    {selectedBatch.current_stage === 'fermenting' && (
-                      <Button 
-                        onClick={async () => {
-                          setOperationLoading(selectedBatch.id);
-                          await updateBatchStage(selectedBatch.id, 'aging');
-                          setOperationLoading(null);
-                        }}
-                        disabled={operationLoading === selectedBatch.id}
-                        className="w-full"
-                      >
-                        {operationLoading === selectedBatch.id ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Updating...
-                          </>
-                        ) : (
-                          'Move to Aging →'
-                        )}
-                      </Button>
-                    )}
-
-                    {selectedBatch.current_stage === 'aging' && (
-                      <Button 
-                        onClick={async () => {
-                          setOperationLoading(selectedBatch.id);
-                          await updateBatchStage(selectedBatch.id, 'bottled');
-                          setOperationLoading(null);
-                        }}
-                        disabled={operationLoading === selectedBatch.id}
-                        className="w-full"
-                      >
-                        {operationLoading === selectedBatch.id ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Updating...
-                          </>
-                        ) : (
-                          'Move to Bottled →'
-                        )}
-                      </Button>
-                    )}
-
-                    {selectedBatch.current_stage === 'bottled' && (
-                      <div className="flex items-center gap-2 p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
-                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
-                        <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                          This batch is complete!
-                        </p>
-                      </div>
-                    )}
+                      return (
+                        <Button
+                          onClick={() => handleUpdateBatchStage(selectedBatch.id, transition.nextStage)}
+                          disabled={operationLoading === selectedBatch.id}
+                          className="w-full"
+                        >
+                          {operationLoading === selectedBatch.id ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                              Updating...
+                            </>
+                          ) : (
+                            transition.label
+                          )}
+                        </Button>
+                      );
+                    })()}
                   </div>
 
                   <div className="bg-muted/50 p-4 rounded-lg space-y-1">
@@ -852,39 +1038,29 @@ export default function Dashboard() {
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          onClick={async () => {
-                            try {
-                              const { error } = await supabase
-                                .from('batches')
-                                .delete()
-                                .eq('id', selectedBatch.id)
-                                .eq('organization_id', organization!.id);
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            disabled={operationLoading === selectedBatch.id}
+                            onClick={() => {
+                              if (!organizationId) {
+                                toast({
+                                  variant: 'destructive',
+                                  title: 'Error',
+                                  description: 'Organization context is missing.',
+                                });
+                                return;
+                              }
 
-                              if (error) throw error;
-
-                              setBatches(batches.filter(b => b.id !== selectedBatch.id));
-
-                              toast({
-                                title: "Batch deleted",
-                                description: `${selectedBatch.name} has been removed.`,
+                              deleteBatchMutation.mutate({
+                                batchId: selectedBatch.id,
+                                organizationId,
+                                batchName: selectedBatch.name,
                               });
-
-                              setBatchDialogOpen(false);
-                              setDeleteDialogOpen(false);
-                            } catch (error: any) {
-                              toast({
-                                variant: "destructive",
-                                title: "Error",
-                                description: error.message,
-                              });
-                            }
-                          }}
-                        >
-                          Delete
-                        </AlertDialogAction>
+                            }}
+                          >
+                            Delete
+                          </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { 
-  ArrowLeft, User, Building2, Shield, Trash2, 
-  Edit, Mail, Lock, Users, AlertTriangle 
+import {
+  ArrowLeft, User, Building2, Shield, Trash2,
+  Edit, Mail, Lock, Users, AlertTriangle, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,127 +16,311 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { User } from '@supabase/supabase-js';
+import type { Tables, TablesUpdate } from '@/integrations/supabase/types';
 
-type Organization = {
-  id: string;
-  name: string;
-  created_at: string;
+type Organization = Tables<'organizations'>;
+
+type MemberRole = 'owner' | 'admin' | 'member';
+
+type OrganizationMembership = Tables<'organization_members'> & {
+  organizations: Organization;
 };
 
-type OrganizationMember = {
-  id: string;
-  role: string;
-  user_id: string;
+type MemberWithProfile = Tables<'organization_members'> & {
   users: {
     email: string;
-    user_metadata: { full_name?: string };
-  };
+    user_metadata: { full_name?: string | null } | null;
+  } | null;
 };
 
 export default function Settings() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [user, setUser] = useState<any>(null);
-  const [organization, setOrganization] = useState<Organization | null>(null);
-  const [members, setMembers] = useState<OrganizationMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  
+  const queryClient = useQueryClient();
+
   const [fullName, setFullName] = useState('');
   const [orgName, setOrgName] = useState('');
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
-  
+
   const [passwords, setPasswords] = useState({
     current: '',
     new: '',
     confirm: ''
   });
+  const {
+    data: user,
+    isLoading: userLoading,
+    error: userError,
+  } = useQuery<User | null>({
+    queryKey: ['auth-user'],
+    queryFn: async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) throw error;
+      return data.user;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const {
+    data: membership,
+    isLoading: membershipLoading,
+    error: membershipError,
+  } = useQuery<(OrganizationMembership & { role: MemberRole }) | null>({
+    queryKey: ['organization-membership', user?.id],
+    enabled: Boolean(user?.id),
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data, error } = await supabase
+        .from('organization_members')
+        .select('organization_id, role, organizations(*)')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) return null;
+
+      return {
+        ...data,
+        role: (data.role as MemberRole) ?? 'member',
+        organizations: data.organizations as Organization,
+      };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const organization = membership?.organizations ?? null;
+  const organizationId = organization?.id ?? null;
+  const memberRole = membership?.role;
+
+  const {
+    data: membersData,
+    isLoading: membersLoading,
+    error: membersError,
+  } = useQuery<MemberWithProfile[]>({
+    queryKey: ['organization-members', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: async () => {
+      if (!organizationId) return [];
+      const { data, error } = await supabase
+        .from('organization_members')
+        .select(`
+          id,
+          role,
+          user_id,
+          users:user_id (email, user_metadata)
+        `)
+        .eq('organization_id', organizationId);
+
+      if (error) throw error;
+      return (data as MemberWithProfile[]) ?? [];
+    },
+    staleTime: 60 * 1000,
+  });
+
+  const members = membersData ?? [];
+  const isLoading = userLoading || membershipLoading || (Boolean(organizationId) && membersLoading);
 
   useEffect(() => {
-    loadSettings();
-  }, []);
+    if (user && !userLoading) {
+      setFullName(user.user_metadata?.full_name ?? '');
+    }
+  }, [user, userLoading]);
 
-  async function loadSettings() {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      setFullName(user?.user_metadata?.full_name || '');
+  useEffect(() => {
+    if (organization) {
+      setOrgName(organization.name);
+    }
+  }, [organization]);
 
-      const { data: memberData } = await supabase
-        .from('organization_members')
-        .select('organization_id, organizations(*)')
-        .eq('user_id', user!.id)
+  useEffect(() => {
+    const error = userError ?? membershipError ?? membersError;
+    if (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load settings data';
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: message,
+      });
+    }
+  }, [userError, membershipError, membersError, toast]);
+
+  const canDeleteOrganization = memberRole === 'owner' || memberRole === 'admin';
+  const teamSizeLabels: Record<string, string> = {
+    small: 'Small (just me)',
+    medium: 'Medium (2-10 people)',
+    large: 'Large (10+ people)',
+  };
+  const teamSizeLabel = organization
+    ? teamSizeLabels[organization.team_size] ?? organization.team_size
+    : 'N/A';
+
+  const updateNameMutation = useMutation<string, Error, string>({
+    mutationFn: async (name) => {
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: name },
+      });
+
+      if (error) throw error;
+      return name;
+    },
+    onSuccess: () => {
+      toast({
+        title: 'Name updated!',
+        description: 'Your profile has been updated.',
+      });
+      queryClient.invalidateQueries({ queryKey: ['auth-user'] });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    },
+  });
+
+  const updateOrganizationMutation = useMutation<Organization, Error, { organizationId: string; updates: TablesUpdate<'organizations'> }>({
+    mutationFn: async ({ organizationId, updates }) => {
+      const { data, error } = await supabase
+        .from('organizations')
+        .update(updates)
+        .eq('id', organizationId)
+        .select()
         .single();
 
-      if (memberData) {
-        setOrganization(memberData.organizations as any);
-        setOrgName((memberData.organizations as any).name);
+      if (error) throw error;
+      return data as Organization;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: 'Organization updated!',
+        description: 'Your organization name has been changed.',
+      });
 
-        // Load all members
-        const { data: membersData } = await supabase
-          .from('organization_members')
-          .select(`
-            id,
-            role,
-            user_id,
-            users:user_id (email, user_metadata)
-          `)
-          .eq('organization_id', memberData.organization_id);
+      queryClient.setQueryData<(OrganizationMembership & { role: MemberRole }) | null>(
+        ['organization-membership', user?.id],
+        (old) => (old ? { ...old, organizations: data } : old)
+      );
+      queryClient.invalidateQueries({ queryKey: ['organization-members', data.id] });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    },
+  });
 
-        setMembers(membersData as any || []);
+  const changePasswordMutation = useMutation<void, Error, { currentPassword: string; newPassword: string; email: string }>({
+    mutationFn: async ({ currentPassword, newPassword, email }) => {
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+
+      if (verifyError) {
+        throw new Error('Current password is incorrect');
       }
-    } catch (error) {
-      console.error('Error loading settings:', error);
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  async function updateName() {
-    try {
       const { error } = await supabase.auth.updateUser({
-        data: { full_name: fullName }
+        password: newPassword,
       });
 
       if (error) throw error;
-
+    },
+    onSuccess: () => {
       toast({
-        title: "Name updated!",
-        description: "Your profile has been updated.",
+        title: 'Password changed!',
+        description: 'Your password has been updated.',
       });
-    } catch (error: any) {
+      setPasswords({ current: '', new: '', confirm: '' });
+    },
+    onError: (error) => {
       toast({
-        variant: "destructive",
-        title: "Error",
+        variant: 'destructive',
+        title: 'Error',
         description: error.message,
       });
-    }
-  }
+    },
+  });
 
-  async function updateOrganization() {
-    try {
+  const deleteOrganizationMutation = useMutation<void, Error, { organizationId: string }>({
+    mutationFn: async ({ organizationId }) => {
       const { error } = await supabase
         .from('organizations')
-        .update({ name: orgName })
-        .eq('id', organization!.id);
+        .delete()
+        .eq('id', organizationId);
 
       if (error) throw error;
-
-      setOrganization(prev => prev ? { ...prev, name: orgName } : null);
-
+    },
+    onSuccess: async () => {
       toast({
-        title: "Organization updated!",
-        description: "Your organization name has been changed.",
+        title: 'Organization deleted',
+        description: 'Your organization and all data have been removed.',
       });
-    } catch (error: any) {
+
+      setDeleteConfirmation('');
+      await supabase.auth.signOut();
+      navigate('/');
+    },
+    onError: (error) => {
       toast({
-        variant: "destructive",
-        title: "Error",
+        variant: 'destructive',
+        title: 'Error',
         description: error.message,
       });
+    },
+    onSettled: () => {
+      setDeleteConfirmation('');
+    },
+  });
+
+  function updateName() {
+    const trimmedName = fullName.trim();
+    if (!trimmedName) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Name cannot be empty.',
+      });
+      return;
     }
+
+    setFullName(trimmedName);
+    updateNameMutation.mutate(trimmedName);
   }
 
-  async function changePassword() {
+  function updateOrganization() {
+    if (!organizationId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Organization context is missing.',
+      });
+      return;
+    }
+
+    const trimmedName = orgName.trim();
+    if (!trimmedName) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Organization name cannot be empty.',
+      });
+      return;
+    }
+
+    setOrgName(trimmedName);
+    updateOrganizationMutation.mutate({
+      organizationId,
+      updates: { name: trimmedName },
+    });
+  }
+
+  function changePassword() {
     if (passwords.new !== passwords.confirm) {
       toast({
         variant: "destructive",
@@ -155,29 +339,32 @@ export default function Settings() {
       return;
     }
 
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password: passwords.new
-      });
-
-      if (error) throw error;
-
+    if (!passwords.current) {
       toast({
-        title: "Password changed!",
-        description: "Your password has been updated.",
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Please enter your current password.',
       });
-
-      setPasswords({ current: '', new: '', confirm: '' });
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message,
-      });
+      return;
     }
+
+    if (!user?.email) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Unable to determine account email.',
+      });
+      return;
+    }
+
+    changePasswordMutation.mutate({
+      currentPassword: passwords.current,
+      newPassword: passwords.new,
+      email: user.email,
+    });
   }
 
-  async function deleteOrganization() {
+  function deleteOrganization() {
     if (deleteConfirmation !== 'DELETE') {
       toast({
         variant: "destructive",
@@ -187,34 +374,57 @@ export default function Settings() {
       return;
     }
 
-    try {
-      const { error } = await supabase
-        .from('organizations')
-        .delete()
-        .eq('id', organization!.id);
-
-      if (error) throw error;
-
+    if (!organizationId) {
       toast({
-        title: "Organization deleted",
-        description: "Your organization and all data have been removed.",
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Organization context is missing.',
       });
-
-      await supabase.auth.signOut();
-      navigate('/');
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message,
-      });
+      return;
     }
+
+    if (!canDeleteOrganization) {
+      toast({
+        variant: 'destructive',
+        title: 'Insufficient permissions',
+        description: 'Only organization owners or admins can delete this organization.',
+      });
+      return;
+    }
+
+    deleteOrganizationMutation.mutate({ organizationId });
   }
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!organization) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6 text-center space-y-4">
+        <Building2 className="h-10 w-10 text-primary" />
+        <h1 className="text-2xl font-semibold">No organization found</h1>
+        <p className="text-muted-foreground max-w-sm">
+          We couldn't find an organization associated with your account. Create one to manage your cidery settings.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button onClick={() => navigate('/onboarding')}>
+            Create organization
+          </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              await supabase.auth.signOut();
+              navigate('/');
+            }}
+          >
+            Sign out
+          </Button>
+        </div>
       </div>
     );
   }
@@ -269,9 +479,18 @@ export default function Settings() {
                       onChange={(e) => setFullName(e.target.value)}
                       placeholder="John Doe"
                     />
-                    <Button onClick={updateName}>
-                      <Edit className="h-4 w-4 mr-2" />
-                      Update
+                    <Button onClick={updateName} disabled={updateNameMutation.isPending}>
+                      {updateNameMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Edit className="h-4 w-4 mr-2" />
+                          Update
+                        </>
+                      )}
                     </Button>
                   </div>
                 </div>
@@ -291,8 +510,19 @@ export default function Settings() {
 
             <div className="bg-card rounded-xl border p-6">
               <h3 className="text-lg font-semibold mb-4">Change Password</h3>
-              
+
               <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="current-password">Current Password</Label>
+                  <Input
+                    id="current-password"
+                    type="password"
+                    value={passwords.current}
+                    onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
+                    placeholder="••••••••"
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="new-password">New Password</Label>
                   <Input
@@ -315,9 +545,26 @@ export default function Settings() {
                   />
                 </div>
 
-                <Button onClick={changePassword} disabled={!passwords.new || !passwords.confirm}>
-                  <Lock className="h-4 w-4 mr-2" />
-                  Change Password
+                <Button
+                  onClick={changePassword}
+                  disabled={
+                    changePasswordMutation.isPending ||
+                    !passwords.current ||
+                    !passwords.new ||
+                    !passwords.confirm
+                  }
+                >
+                  {changePasswordMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="h-4 w-4 mr-2" />
+                      Change Password
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -338,9 +585,18 @@ export default function Settings() {
                       onChange={(e) => setOrgName(e.target.value)}
                       placeholder="Acme Cidery"
                     />
-                    <Button onClick={updateOrganization}>
-                      <Edit className="h-4 w-4 mr-2" />
-                      Update
+                    <Button onClick={updateOrganization} disabled={updateOrganizationMutation.isPending}>
+                      {updateOrganizationMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Edit className="h-4 w-4 mr-2" />
+                          Update
+                        </>
+                      )}
                     </Button>
                   </div>
                 </div>
@@ -351,6 +607,11 @@ export default function Settings() {
                     {organization ? format(new Date(organization.created_at), 'PPP') : 'N/A'}
                   </p>
                 </div>
+
+                <div className="space-y-2">
+                  <Label>Team Size</Label>
+                  <p className="text-sm text-muted-foreground capitalize">{teamSizeLabel}</p>
+                </div>
               </div>
             </div>
 
@@ -358,22 +619,28 @@ export default function Settings() {
               <h3 className="text-lg font-semibold mb-4">Team Members</h3>
               
               <div className="space-y-3">
-                {members.map((member) => (
-                  <div key={member.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <Users className="h-4 w-4 text-muted-foreground" />
-                      <div>
-                        <p className="text-sm font-medium">
-                          {member.users?.user_metadata?.full_name || 'Unknown'}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{member.users?.email}</p>
+                {members.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No team members yet. Invite colleagues to collaborate.
+                  </p>
+                ) : (
+                  members.map((member) => (
+                    <div key={member.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <Users className="h-4 w-4 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">
+                            {member.users?.user_metadata?.full_name || 'Unknown'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{member.users?.email}</p>
+                        </div>
                       </div>
+                      <span className="text-xs px-2 py-1 bg-background rounded-md capitalize">
+                        {member.role}
+                      </span>
                     </div>
-                    <span className="text-xs px-2 py-1 bg-background rounded-md capitalize">
-                      {member.role}
-                    </span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
 
               <Button variant="outline" className="w-full mt-4" onClick={() => {
@@ -415,9 +682,15 @@ export default function Settings() {
                 </div>
               </div>
 
-              <AlertDialog>
+              <AlertDialog onOpenChange={(open) => {
+                if (!open) setDeleteConfirmation('');
+              }}>
                 <AlertDialogTrigger asChild>
-                  <Button variant="destructive" className="w-full">
+                  <Button
+                    variant="destructive"
+                    className="w-full"
+                    disabled={!canDeleteOrganization || deleteOrganizationMutation.isPending}
+                  >
                     <Trash2 className="h-4 w-4 mr-2" />
                     Delete Organization
                   </Button>
@@ -426,7 +699,7 @@ export default function Settings() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will permanently delete <strong>{organization?.name}</strong> and all batches, 
+                      This will permanently delete <strong>{organization?.name}</strong> and all batches,
                       members, and data. This action cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
@@ -448,13 +721,27 @@ export default function Settings() {
                     <AlertDialogAction
                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                       onClick={deleteOrganization}
-                      disabled={deleteConfirmation !== 'DELETE'}
+                      disabled={
+                        deleteConfirmation !== 'DELETE' || deleteOrganizationMutation.isPending
+                      }
                     >
-                      Delete Forever
+                      {deleteOrganizationMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          Deleting...
+                        </>
+                      ) : (
+                        'Delete Forever'
+                      )}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
+              {!canDeleteOrganization && (
+                <p className="text-xs text-muted-foreground mt-3">
+                  Only organization owners or admins can delete this organization.
+                </p>
+              )}
             </div>
           </TabsContent>
         </Tabs>

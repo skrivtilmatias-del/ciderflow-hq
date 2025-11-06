@@ -67,11 +67,12 @@ export default function Auth() {
           }
         }
       }
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'An error occurred';
       toast({
         variant: "destructive",
         title: "Error",
-        description: error.message || 'An error occurred',
+        description: message,
       });
     } finally {
       setLoading(false);
