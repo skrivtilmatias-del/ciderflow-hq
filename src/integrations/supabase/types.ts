@@ -61,6 +61,50 @@ export type Database = {
           },
         ]
       }
+      fermentation_logs: {
+        Row: {
+          batch_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          notes: string | null
+          ph: number | null
+          recorded_at: string
+          specific_gravity: number | null
+          temperature: number | null
+        }
+        Insert: {
+          batch_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          ph?: number | null
+          recorded_at?: string
+          specific_gravity?: number | null
+          temperature?: number | null
+        }
+        Update: {
+          batch_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          notes?: string | null
+          ph?: number | null
+          recorded_at?: string
+          specific_gravity?: number | null
+          temperature?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fermentation_logs_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_members: {
         Row: {
           created_at: string
@@ -119,6 +163,103 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      packaging_schedules: {
+        Row: {
+          batch_id: string
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          format: string
+          id: string
+          notes: string | null
+          quantity: number | null
+          target_date: string
+        }
+        Insert: {
+          batch_id: string
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          format: string
+          id?: string
+          notes?: string | null
+          quantity?: number | null
+          target_date: string
+        }
+        Update: {
+          batch_id?: string
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          format?: string
+          id?: string
+          notes?: string | null
+          quantity?: number | null
+          target_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "packaging_schedules_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasting_notes: {
+        Row: {
+          acidity: number | null
+          aroma: string | null
+          batch_id: string
+          body: number | null
+          created_at: string
+          created_by: string | null
+          finish: string | null
+          flavor: string | null
+          id: string
+          notes: string | null
+          recorded_at: string
+          sweetness: number | null
+        }
+        Insert: {
+          acidity?: number | null
+          aroma?: string | null
+          batch_id: string
+          body?: number | null
+          created_at?: string
+          created_by?: string | null
+          finish?: string | null
+          flavor?: string | null
+          id?: string
+          notes?: string | null
+          recorded_at?: string
+          sweetness?: number | null
+        }
+        Update: {
+          acidity?: number | null
+          aroma?: string | null
+          batch_id?: string
+          body?: number | null
+          created_at?: string
+          created_by?: string | null
+          finish?: string | null
+          flavor?: string | null
+          id?: string
+          notes?: string | null
+          recorded_at?: string
+          sweetness?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasting_notes_batch_id_fkey"
+            columns: ["batch_id"]
+            isOneToOne: false
+            referencedRelation: "batches"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

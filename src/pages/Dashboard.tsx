@@ -1,7 +1,29 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { Wine, Plus, LogOut, Settings, Package, Calendar, Beaker, Edit, Trash2, AlertTriangle, CheckCircle2, Search, Filter, SortAsc, Loader2 } from 'lucide-react';
+import {
+  Wine,
+  Plus,
+  LogOut,
+  Settings,
+  Package,
+  Calendar,
+  Beaker,
+  Edit,
+  Trash2,
+  AlertTriangle,
+  CheckCircle2,
+  Search,
+  Filter,
+  SortAsc,
+  Loader2,
+  Thermometer,
+  Droplet,
+  ClipboardList,
+  CalendarCheck,
+  FlaskConical,
+  Star,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,6 +34,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { User } from '@supabase/supabase-js';
@@ -34,6 +57,36 @@ type BatchFormState = {
   variety: string;
   volume: number | '';
   start_date: string;
+};
+
+type FermentationLog = Tables<'fermentation_logs'>;
+type TastingNote = Tables<'tasting_notes'>;
+type PackagingSchedule = Tables<'packaging_schedules'>;
+
+type FermentationFormState = {
+  recorded_at: string;
+  temperature: number | '';
+  specific_gravity: number | '';
+  ph: number | '';
+  notes: string;
+};
+
+type TastingFormState = {
+  recorded_at: string;
+  sweetness: number | '';
+  acidity: number | '';
+  body: number | '';
+  aroma: string;
+  flavor: string;
+  finish: string;
+  notes: string;
+};
+
+type PackagingFormState = {
+  target_date: string;
+  format: PackagingSchedule['format'];
+  quantity: number | '';
+  notes: string;
 };
 
 export default function Dashboard() {
@@ -134,9 +187,219 @@ export default function Dashboard() {
   const [stageFilter, setStageFilter] = useState<'all' | BatchStage>('all');
   const [sortBy, setSortBy] = useState('newest');
   const [operationLoading, setOperationLoading] = useState<string | null>(null);
+  const [newFermentationLog, setNewFermentationLog] = useState<FermentationFormState>({
+    recorded_at: new Date().toISOString().split('T')[0],
+    temperature: '',
+    specific_gravity: '',
+    ph: '',
+    notes: '',
+  });
+  const [newTastingNote, setNewTastingNote] = useState<TastingFormState>({
+    recorded_at: new Date().toISOString().split('T')[0],
+    sweetness: 3,
+    acidity: 3,
+    body: 3,
+    aroma: '',
+    flavor: '',
+    finish: '',
+    notes: '',
+  });
+  const [newPackagingPlan, setNewPackagingPlan] = useState<PackagingFormState>({
+    target_date: new Date().toISOString().split('T')[0],
+    format: 'bottle',
+    quantity: '',
+    notes: '',
+  });
+
+  const packagingFormats: { value: PackagingSchedule['format']; label: string }[] = [
+    { value: 'bottle', label: 'Bottle' },
+    { value: 'can', label: 'Can' },
+    { value: 'keg', label: 'Keg' },
+    { value: 'bag-in-box', label: 'Bag-in-Box' },
+    { value: 'growler', label: 'Growler' },
+    { value: 'other', label: 'Other' },
+  ];
+
+  const sensoryScale = [1, 2, 3, 4, 5] as const;
+
+  const selectedBatchId = selectedBatch?.id ?? null;
+
+  const parseOptionalNumber = (value: number | '') =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
 
   useEffect(() => {
-    const error = userError ?? membershipError ?? batchesError;
+    if (batchDialogOpen && selectedBatchId) {
+      const today = new Date().toISOString().split('T')[0];
+      setNewFermentationLog({
+        recorded_at: today,
+        temperature: '',
+        specific_gravity: '',
+        ph: '',
+        notes: '',
+      });
+      setNewTastingNote({
+        recorded_at: today,
+        sweetness: 3,
+        acidity: 3,
+        body: 3,
+        aroma: '',
+        flavor: '',
+        finish: '',
+        notes: '',
+      });
+      setNewPackagingPlan({
+        target_date: today,
+        format: 'bottle',
+        quantity: '',
+        notes: '',
+      });
+    }
+  }, [batchDialogOpen, selectedBatchId]);
+
+  const {
+    data: fermentationLogs = [],
+    isLoading: fermentationLogsLoading,
+    error: fermentationLogsError,
+  } = useQuery<FermentationLog[]>({
+    queryKey: ['fermentation-logs', selectedBatchId],
+    enabled: batchDialogOpen && Boolean(selectedBatchId),
+    queryFn: async () => {
+      if (!selectedBatchId) return [];
+      const { data, error } = await supabase
+        .from('fermentation_logs')
+        .select('*')
+        .eq('batch_id', selectedBatchId)
+        .order('recorded_at', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const {
+    data: tastingNotes = [],
+    isLoading: tastingNotesLoading,
+    error: tastingNotesError,
+  } = useQuery<TastingNote[]>({
+    queryKey: ['tasting-notes', selectedBatchId],
+    enabled: batchDialogOpen && Boolean(selectedBatchId),
+    queryFn: async () => {
+      if (!selectedBatchId) return [];
+      const { data, error } = await supabase
+        .from('tasting_notes')
+        .select('*')
+        .eq('batch_id', selectedBatchId)
+        .order('recorded_at', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const {
+    data: packagingSchedules = [],
+    isLoading: packagingSchedulesLoading,
+    error: packagingSchedulesError,
+  } = useQuery<PackagingSchedule[]>({
+    queryKey: ['packaging-schedules', selectedBatchId],
+    enabled: batchDialogOpen && Boolean(selectedBatchId),
+    queryFn: async () => {
+      if (!selectedBatchId) return [];
+      const { data, error } = await supabase
+        .from('packaging_schedules')
+        .select('*')
+        .eq('batch_id', selectedBatchId)
+        .order('target_date', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  type PackagingWithBatch = PackagingSchedule & { batches?: { name: string } | null };
+  type FermentationWithBatch = FermentationLog & { batches?: { name: string } | null };
+  type TastingWithBatch = TastingNote & { batches?: { name: string } | null };
+
+  const {
+    data: upcomingPackaging = [],
+    error: upcomingPackagingError,
+  } = useQuery<PackagingWithBatch[]>({
+    queryKey: ['upcoming-packaging', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: async () => {
+      if (!organizationId) return [];
+      const { data, error } = await supabase
+        .from('packaging_schedules')
+        .select('*, batches!inner(name, organization_id)')
+        .eq('batches.organization_id', organizationId)
+        .is('completed_at', null)
+        .order('target_date', { ascending: true })
+        .limit(5);
+
+      if (error) throw error;
+      return (data ?? []) as PackagingWithBatch[];
+    },
+    staleTime: 30 * 1000,
+  });
+
+  const {
+    data: recentFermentation = [],
+    error: recentFermentationError,
+  } = useQuery<FermentationWithBatch[]>({
+    queryKey: ['recent-fermentation', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: async () => {
+      if (!organizationId) return [];
+      const { data, error } = await supabase
+        .from('fermentation_logs')
+        .select('*, batches!inner(name, organization_id)')
+        .eq('batches.organization_id', organizationId)
+        .order('recorded_at', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+      return (data ?? []) as FermentationWithBatch[];
+    },
+    staleTime: 30 * 1000,
+  });
+
+  const {
+    data: recentTastingNotes = [],
+    error: recentTastingError,
+  } = useQuery<TastingWithBatch[]>({
+    queryKey: ['recent-tasting', organizationId],
+    enabled: Boolean(organizationId),
+    queryFn: async () => {
+      if (!organizationId) return [];
+      const { data, error } = await supabase
+        .from('tasting_notes')
+        .select('*, batches!inner(name, organization_id)')
+        .eq('batches.organization_id', organizationId)
+        .order('recorded_at', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+      return (data ?? []) as TastingWithBatch[];
+    },
+    staleTime: 30 * 1000,
+  });
+
+  useEffect(() => {
+    const error =
+      userError ??
+      membershipError ??
+      batchesError ??
+      fermentationLogsError ??
+      tastingNotesError ??
+      packagingSchedulesError ??
+      upcomingPackagingError ??
+      recentFermentationError ??
+      recentTastingError;
     if (error) {
       const message = error instanceof Error ? error.message : 'Failed to load data';
       toast({
@@ -145,7 +408,18 @@ export default function Dashboard() {
         description: message,
       });
     }
-  }, [userError, membershipError, batchesError, toast]);
+  }, [
+    userError,
+    membershipError,
+    batchesError,
+    fermentationLogsError,
+    tastingNotesError,
+    packagingSchedulesError,
+    upcomingPackagingError,
+    recentFermentationError,
+    recentTastingError,
+    toast,
+  ]);
 
   const stageTransitions: Record<BatchStage, { nextStage: BatchStage; label: string } | null> = {
     pressing: { nextStage: 'fermenting', label: 'Move to Fermenting →' },
@@ -316,6 +590,237 @@ export default function Dashboard() {
     onSettled: () => setOperationLoading(null),
   });
 
+  const createFermentationLogMutation = useMutation<FermentationLog, Error, TablesInsert<'fermentation_logs'>>({
+    mutationFn: async (payload) => {
+      const { data, error } = await supabase
+        .from('fermentation_logs')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as FermentationLog;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData<FermentationLog[]>(['fermentation-logs', data.batch_id], (old) =>
+        old ? [data, ...old] : [data]
+      );
+      if (organizationId) {
+        queryClient.invalidateQueries({ queryKey: ['recent-fermentation', organizationId] });
+      }
+      toast({
+        title: 'Fermentation log saved',
+        description: 'The latest fermentation metrics have been recorded.',
+      });
+      setNewFermentationLog((prev) => ({ ...prev, temperature: '', specific_gravity: '', ph: '', notes: '' }));
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error recording metrics',
+        description: error.message,
+      });
+    },
+  });
+
+  const deleteFermentationLogMutation = useMutation<string, Error, { id: string; batchId: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase
+        .from('fermentation_logs')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: (id, variables) => {
+      queryClient.setQueryData<FermentationLog[]>(['fermentation-logs', variables.batchId], (old) =>
+        old ? old.filter((log) => log.id !== id) : []
+      );
+      if (organizationId) {
+        queryClient.invalidateQueries({ queryKey: ['recent-fermentation', organizationId] });
+      }
+      toast({
+        title: 'Fermentation log deleted',
+        description: 'The reading has been removed.',
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error deleting log',
+        description: error.message,
+      });
+    },
+  });
+
+  const createTastingNoteMutation = useMutation<TastingNote, Error, TablesInsert<'tasting_notes'>>({
+    mutationFn: async (payload) => {
+      const { data, error } = await supabase
+        .from('tasting_notes')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as TastingNote;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData<TastingNote[]>(['tasting-notes', data.batch_id], (old) =>
+        old ? [data, ...old] : [data]
+      );
+      if (organizationId) {
+        queryClient.invalidateQueries({ queryKey: ['recent-tasting', organizationId] });
+      }
+      toast({
+        title: 'Tasting note added',
+        description: 'Your sensory evaluation has been saved.',
+      });
+      setNewTastingNote((prev) => ({ ...prev, aroma: '', flavor: '', finish: '', notes: '' }));
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error adding tasting note',
+        description: error.message,
+      });
+    },
+  });
+
+  const deleteTastingNoteMutation = useMutation<string, Error, { id: string; batchId: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase
+        .from('tasting_notes')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: (id, variables) => {
+      queryClient.setQueryData<TastingNote[]>(['tasting-notes', variables.batchId], (old) =>
+        old ? old.filter((note) => note.id !== id) : []
+      );
+      if (organizationId) {
+        queryClient.invalidateQueries({ queryKey: ['recent-tasting', organizationId] });
+      }
+      toast({
+        title: 'Tasting note removed',
+        description: 'The note has been deleted.',
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error removing note',
+        description: error.message,
+      });
+    },
+  });
+
+  const createPackagingScheduleMutation = useMutation<PackagingSchedule, Error, TablesInsert<'packaging_schedules'>>({
+    mutationFn: async (payload) => {
+      const { data, error } = await supabase
+        .from('packaging_schedules')
+        .insert([payload])
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as PackagingSchedule;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData<PackagingSchedule[]>(['packaging-schedules', data.batch_id], (old) =>
+        old ? [...old, data] : [data]
+      );
+      if (organizationId) {
+        queryClient.invalidateQueries({ queryKey: ['upcoming-packaging', organizationId] });
+      }
+      toast({
+        title: 'Packaging scheduled',
+        description: 'Packaging plan has been added to the timeline.',
+      });
+      setNewPackagingPlan((prev) => ({ ...prev, quantity: '', notes: '' }));
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error scheduling packaging',
+        description: error.message,
+      });
+    },
+  });
+
+  const updatePackagingScheduleMutation = useMutation<
+    PackagingSchedule,
+    Error,
+    { scheduleId: string; batchId: string; updates: TablesUpdate<'packaging_schedules'> }
+  >({
+    mutationFn: async ({ scheduleId, updates }) => {
+      const { data, error } = await supabase
+        .from('packaging_schedules')
+        .update(updates)
+        .eq('id', scheduleId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as PackagingSchedule;
+    },
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData<PackagingSchedule[]>(['packaging-schedules', variables.batchId], (old) =>
+        old
+          ? old.map((schedule) => (schedule.id === data.id ? data : schedule))
+          : [data]
+      );
+      if (organizationId) {
+        queryClient.invalidateQueries({ queryKey: ['upcoming-packaging', organizationId] });
+      }
+      toast({
+        title: 'Packaging updated',
+        description: 'Packaging details have been updated.',
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error updating packaging',
+        description: error.message,
+      });
+    },
+  });
+
+  const deletePackagingScheduleMutation = useMutation<string, Error, { id: string; batchId: string }>({
+    mutationFn: async ({ id }) => {
+      const { error } = await supabase
+        .from('packaging_schedules')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: (id, variables) => {
+      queryClient.setQueryData<PackagingSchedule[]>(['packaging-schedules', variables.batchId], (old) =>
+        old ? old.filter((schedule) => schedule.id !== id) : []
+      );
+      if (organizationId) {
+        queryClient.invalidateQueries({ queryKey: ['upcoming-packaging', organizationId] });
+      }
+      toast({
+        title: 'Packaging removed',
+        description: 'The packaging plan has been deleted.',
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: 'destructive',
+        title: 'Error deleting packaging',
+        description: error.message,
+      });
+    },
+  });
+
   function handleCreateBatch(e: React.FormEvent) {
     e.preventDefault();
 
@@ -345,6 +850,137 @@ export default function Dashboard() {
       current_stage: 'pressing',
       start_date: newBatch.start_date,
       created_by: user.id,
+    });
+  }
+
+  function handleAddFermentationLog(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!user?.id || !selectedBatchId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Batch context is missing.',
+      });
+      return;
+    }
+
+    const payload: TablesInsert<'fermentation_logs'> = {
+      batch_id: selectedBatchId,
+      recorded_at: newFermentationLog.recorded_at,
+      temperature: parseOptionalNumber(newFermentationLog.temperature),
+      specific_gravity: parseOptionalNumber(newFermentationLog.specific_gravity),
+      ph: parseOptionalNumber(newFermentationLog.ph),
+      notes: newFermentationLog.notes ? newFermentationLog.notes.trim() : null,
+      created_by: user.id,
+    };
+
+    if (!payload.temperature && !payload.specific_gravity && !payload.ph && !payload.notes) {
+      toast({
+        variant: 'destructive',
+        title: 'Add some data',
+        description: 'Record at least one metric or note to save a fermentation log.',
+      });
+      return;
+    }
+
+    createFermentationLogMutation.mutate(payload);
+  }
+
+  function handleAddTastingNote(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!user?.id || !selectedBatchId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Batch context is missing.',
+      });
+      return;
+    }
+
+    const payload: TablesInsert<'tasting_notes'> = {
+      batch_id: selectedBatchId,
+      recorded_at: newTastingNote.recorded_at,
+      sweetness: typeof newTastingNote.sweetness === 'number' ? newTastingNote.sweetness : null,
+      acidity: typeof newTastingNote.acidity === 'number' ? newTastingNote.acidity : null,
+      body: typeof newTastingNote.body === 'number' ? newTastingNote.body : null,
+      aroma: newTastingNote.aroma ? newTastingNote.aroma.trim() : null,
+      flavor: newTastingNote.flavor ? newTastingNote.flavor.trim() : null,
+      finish: newTastingNote.finish ? newTastingNote.finish.trim() : null,
+      notes: newTastingNote.notes ? newTastingNote.notes.trim() : null,
+      created_by: user.id,
+    };
+
+    if (
+      !payload.aroma &&
+      !payload.flavor &&
+      !payload.finish &&
+      !payload.notes
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'Add tasting details',
+        description: 'Capture some sensory notes before saving.',
+      });
+      return;
+    }
+
+    createTastingNoteMutation.mutate(payload);
+  }
+
+  function handleAddPackagingPlan(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!user?.id || !selectedBatchId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Batch context is missing.',
+      });
+      return;
+    }
+
+    const quantity =
+      typeof newPackagingPlan.quantity === 'number' && Number.isFinite(newPackagingPlan.quantity)
+        ? newPackagingPlan.quantity
+        : null;
+
+    if (quantity !== null && quantity < 0) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid quantity',
+        description: 'Packaging quantity cannot be negative.',
+      });
+      return;
+    }
+
+    const payload: TablesInsert<'packaging_schedules'> = {
+      batch_id: selectedBatchId,
+      target_date: newPackagingPlan.target_date,
+      format: newPackagingPlan.format,
+      quantity,
+      notes: newPackagingPlan.notes ? newPackagingPlan.notes.trim() : null,
+      created_by: user.id,
+    };
+
+    createPackagingScheduleMutation.mutate(payload);
+  }
+
+  function handleMarkPackagingComplete(schedule: PackagingSchedule) {
+    if (!selectedBatchId) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: 'Batch context is missing.',
+      });
+      return;
+    }
+
+    updatePackagingScheduleMutation.mutate({
+      scheduleId: schedule.id,
+      batchId: selectedBatchId,
+      updates: { completed_at: new Date().toISOString() },
     });
   }
 
@@ -397,6 +1033,26 @@ export default function Dashboard() {
   const hasActiveFilters = searchQuery.trim() || stageFilter !== 'all' || sortBy !== 'newest';
   const totalVolume = batches.reduce((sum, batch) => sum + batch.volume, 0);
   const activeBatches = batches.filter((batch) => batch.current_stage !== 'bottled').length;
+  const nextPackaging = upcomingPackaging[0] ?? null;
+  const nextPackagingSummary = nextPackaging
+    ? `${format(new Date(nextPackaging.target_date), 'MMM d, yyyy')} • ${nextPackaging.batches?.name ?? 'Batch'}`
+    : 'No packaging scheduled';
+  const completingScheduleId =
+    updatePackagingScheduleMutation.isPending && updatePackagingScheduleMutation.variables
+      ? updatePackagingScheduleMutation.variables.scheduleId
+      : null;
+  const deletingScheduleId =
+    deletePackagingScheduleMutation.isPending && deletePackagingScheduleMutation.variables
+      ? deletePackagingScheduleMutation.variables.id
+      : null;
+  const deletingFermentationId =
+    deleteFermentationLogMutation.isPending && deleteFermentationLogMutation.variables
+      ? deleteFermentationLogMutation.variables.id
+      : null;
+  const deletingTastingId =
+    deleteTastingNoteMutation.isPending && deleteTastingNoteMutation.variables
+      ? deleteTastingNoteMutation.variables.id
+      : null;
 
   const getStageColor = (stage: BatchStage) => {
     switch (stage) {
@@ -558,6 +1214,35 @@ export default function Dashboard() {
               <p className="text-sm font-medium text-muted-foreground">Active Batches</p>
             </div>
             <p className="text-3xl font-bold">{activeBatches}</p>
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-card rounded-xl border p-6">
+            <div className="flex items-center gap-3 mb-2">
+              <FlaskConical className="h-5 w-5 text-primary" />
+              <p className="text-sm font-medium text-muted-foreground">Recent Fermentation Logs</p>
+            </div>
+            <p className="text-3xl font-bold">{recentFermentation.length}</p>
+            <p className="text-xs text-muted-foreground mt-2">Last five readings recorded across your cidery.</p>
+          </div>
+
+          <div className="bg-card rounded-xl border p-6">
+            <div className="flex items-center gap-3 mb-2">
+              <Star className="h-5 w-5 text-primary" />
+              <p className="text-sm font-medium text-muted-foreground">Recent Tasting Notes</p>
+            </div>
+            <p className="text-3xl font-bold">{recentTastingNotes.length}</p>
+            <p className="text-xs text-muted-foreground mt-2">Sensory reviews captured by your team.</p>
+          </div>
+
+          <div className="bg-card rounded-xl border p-6">
+            <div className="flex items-center gap-3 mb-2">
+              <CalendarCheck className="h-5 w-5 text-primary" />
+              <p className="text-sm font-medium text-muted-foreground">Upcoming Packaging</p>
+            </div>
+            <p className="text-3xl font-bold">{upcomingPackaging.length}</p>
+            <p className="text-xs text-muted-foreground mt-2">{nextPackagingSummary}</p>
           </div>
         </div>
 
@@ -815,6 +1500,123 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        <div className="grid lg:grid-cols-3 gap-6 mt-10">
+          <div className="bg-card rounded-xl border p-6 flex flex-col gap-4">
+            <div className="flex items-start gap-3">
+              <Thermometer className="h-5 w-5 text-primary mt-0.5" />
+              <div>
+                <h3 className="text-lg font-semibold">Fermentation Activity</h3>
+                <p className="text-sm text-muted-foreground">Latest metrics captured from every batch.</p>
+              </div>
+            </div>
+            <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+              {recentFermentation.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No fermentation readings logged yet.</p>
+              ) : (
+                recentFermentation.map((log) => {
+                  const metrics: string[] = [];
+                  if (typeof log.temperature === 'number') metrics.push(`${log.temperature.toFixed(1)}°C`);
+                  if (typeof log.specific_gravity === 'number') metrics.push(`SG ${log.specific_gravity.toFixed(3)}`);
+                  if (typeof log.ph === 'number') metrics.push(`pH ${log.ph.toFixed(2)}`);
+
+                  return (
+                    <div key={log.id} className="border rounded-lg p-4 bg-background">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium">{log.batches?.name ?? 'Batch'}</p>
+                        <span className="text-xs text-muted-foreground">
+                          {format(new Date(log.recorded_at), 'MMM d, yyyy')}
+                        </span>
+                      </div>
+                      {metrics.length > 0 && (
+                        <p className="text-sm text-muted-foreground mt-2">{metrics.join(' • ')}</p>
+                      )}
+                      {log.notes && (
+                        <p className="text-sm mt-2 text-foreground/90 line-clamp-3">{log.notes}</p>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="bg-card rounded-xl border p-6 flex flex-col gap-4">
+            <div className="flex items-start gap-3">
+              <Star className="h-5 w-5 text-primary mt-0.5" />
+              <div>
+                <h3 className="text-lg font-semibold">Sensory Feedback</h3>
+                <p className="text-sm text-muted-foreground">Capture tasting feedback as your cider matures.</p>
+              </div>
+            </div>
+            <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+              {recentTastingNotes.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No tasting notes recorded yet.</p>
+              ) : (
+                recentTastingNotes.map((note) => {
+                  const profile: string[] = [];
+                  if (typeof note.sweetness === 'number') profile.push(`Sweetness ${note.sweetness}/5`);
+                  if (typeof note.acidity === 'number') profile.push(`Acidity ${note.acidity}/5`);
+                  if (typeof note.body === 'number') profile.push(`Body ${note.body}/5`);
+
+                  return (
+                    <div key={note.id} className="border rounded-lg p-4 bg-background">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium">{note.batches?.name ?? 'Batch'}</p>
+                        <span className="text-xs text-muted-foreground">
+                          {format(new Date(note.recorded_at), 'MMM d, yyyy')}
+                        </span>
+                      </div>
+                      {profile.length > 0 && (
+                        <p className="text-sm text-muted-foreground mt-2">{profile.join(' • ')}</p>
+                      )}
+                      <div className="mt-2 space-y-1 text-sm text-foreground/90">
+                        {note.aroma && <p><span className="font-medium">Aroma:</span> {note.aroma}</p>}
+                        {note.flavor && <p><span className="font-medium">Flavor:</span> {note.flavor}</p>}
+                        {note.finish && <p><span className="font-medium">Finish:</span> {note.finish}</p>}
+                        {note.notes && <p className="text-muted-foreground">{note.notes}</p>}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="bg-card rounded-xl border p-6 flex flex-col gap-4">
+            <div className="flex items-start gap-3">
+              <ClipboardList className="h-5 w-5 text-primary mt-0.5" />
+              <div>
+                <h3 className="text-lg font-semibold">Packaging Timeline</h3>
+                <p className="text-sm text-muted-foreground">Track how your cider moves into finished goods.</p>
+              </div>
+            </div>
+            <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+              {upcomingPackaging.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No upcoming packaging events scheduled.</p>
+              ) : (
+                upcomingPackaging.map((schedule) => (
+                  <div key={schedule.id} className="border rounded-lg p-4 bg-background">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium">{schedule.batches?.name ?? 'Batch'}</p>
+                      <span className="text-xs text-muted-foreground">
+                        {format(new Date(schedule.target_date), 'MMM d, yyyy')}
+                      </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-2 capitalize">
+                      {schedule.format.replace('-', ' ')}
+                      {typeof schedule.quantity === 'number' ? ` • ${schedule.quantity} units` : ''}
+                    </p>
+                    {schedule.notes && (
+                      <p className="text-sm mt-2 text-foreground/90 line-clamp-3">{schedule.notes}</p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
       </main>
 
       {/* Batch Details Dialog */}
@@ -829,9 +1631,12 @@ export default function Dashboard() {
 
           {selectedBatch && (
             <Tabs defaultValue="details" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-6">
                 <TabsTrigger value="details">Details</TabsTrigger>
                 <TabsTrigger value="stage">Update Stage</TabsTrigger>
+                <TabsTrigger value="metrics">Fermentation</TabsTrigger>
+                <TabsTrigger value="notes">Tasting Notes</TabsTrigger>
+                <TabsTrigger value="packaging">Packaging</TabsTrigger>
                 <TabsTrigger value="danger">Danger Zone</TabsTrigger>
               </TabsList>
 
@@ -1006,6 +1811,515 @@ export default function Dashboard() {
                       <p>4. Bottled → Ready for distribution</p>
                     </div>
                   </div>
+                </div>
+              </TabsContent>
+
+              {/* FERMENTATION TAB */}
+              <TabsContent value="metrics" className="space-y-6">
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <Thermometer className="h-4 w-4 text-primary" />
+                    Log fermentation metrics
+                  </h4>
+                  <form className="space-y-4" onSubmit={handleAddFermentationLog}>
+                    <div className="grid md:grid-cols-4 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="fermentation-date">Recorded on</Label>
+                        <Input
+                          id="fermentation-date"
+                          type="date"
+                          value={newFermentationLog.recorded_at}
+                          onChange={(e) => setNewFermentationLog({ ...newFermentationLog, recorded_at: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="fermentation-temp">Temperature (°C)</Label>
+                        <Input
+                          id="fermentation-temp"
+                          type="number"
+                          step="0.1"
+                          value={newFermentationLog.temperature === '' ? '' : newFermentationLog.temperature}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setNewFermentationLog({ ...newFermentationLog, temperature: '' });
+                              return;
+                            }
+                            const parsed = Number(value);
+                            if (Number.isFinite(parsed)) {
+                              setNewFermentationLog({ ...newFermentationLog, temperature: parsed });
+                            }
+                          }}
+                          placeholder="18.5"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="fermentation-sg">Specific Gravity</Label>
+                        <Input
+                          id="fermentation-sg"
+                          type="number"
+                          step="0.001"
+                          value={newFermentationLog.specific_gravity === '' ? '' : newFermentationLog.specific_gravity}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setNewFermentationLog({ ...newFermentationLog, specific_gravity: '' });
+                              return;
+                            }
+                            const parsed = Number(value);
+                            if (Number.isFinite(parsed)) {
+                              setNewFermentationLog({ ...newFermentationLog, specific_gravity: parsed });
+                            }
+                          }}
+                          placeholder="1.012"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="fermentation-ph">pH</Label>
+                        <Input
+                          id="fermentation-ph"
+                          type="number"
+                          step="0.01"
+                          value={newFermentationLog.ph === '' ? '' : newFermentationLog.ph}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setNewFermentationLog({ ...newFermentationLog, ph: '' });
+                              return;
+                            }
+                            const parsed = Number(value);
+                            if (Number.isFinite(parsed)) {
+                              setNewFermentationLog({ ...newFermentationLog, ph: parsed });
+                            }
+                          }}
+                          placeholder="3.5"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fermentation-notes">Notes</Label>
+                      <Textarea
+                        id="fermentation-notes"
+                        value={newFermentationLog.notes}
+                        onChange={(e) => setNewFermentationLog({ ...newFermentationLog, notes: e.target.value })}
+                        placeholder="Aromas, yeast behavior, adjustments..."
+                        rows={3}
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <Button type="submit" disabled={createFermentationLogMutation.isPending}>
+                        {createFermentationLogMutation.isPending ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Saving...
+                          </>
+                        ) : (
+                          'Save log'
+                        )}
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <FlaskConical className="h-4 w-4 text-primary" />
+                    Logged readings
+                  </h4>
+                  {fermentationLogsLoading ? (
+                    <div className="flex justify-center py-6">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : fermentationLogs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No fermentation logs recorded for this batch yet.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                      {fermentationLogs.map((log) => {
+                        const metrics: string[] = [];
+                        if (typeof log.temperature === 'number') metrics.push(`${log.temperature.toFixed(1)}°C`);
+                        if (typeof log.specific_gravity === 'number') metrics.push(`SG ${log.specific_gravity.toFixed(3)}`);
+                        if (typeof log.ph === 'number') metrics.push(`pH ${log.ph.toFixed(2)}`);
+
+                        return (
+                          <div key={log.id} className="border rounded-lg p-4 bg-muted/40">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium">{format(new Date(log.recorded_at), 'MMM d, yyyy')}</p>
+                                {metrics.length > 0 && (
+                                  <p className="text-sm text-muted-foreground">{metrics.join(' • ')}</p>
+                                )}
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  if (!selectedBatchId) return;
+                                  deleteFermentationLogMutation.mutate({ id: log.id, batchId: selectedBatchId });
+                                }}
+                                disabled={deleteFermentationLogMutation.isPending && deletingFermentationId === log.id}
+                              >
+                                {deleteFermentationLogMutation.isPending && deletingFermentationId === log.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </div>
+                            {log.notes && (
+                              <p className="text-sm text-foreground/90 mt-2">{log.notes}</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* TASTING TAB */}
+              <TabsContent value="notes" className="space-y-6">
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <Star className="h-4 w-4 text-primary" />
+                    Capture tasting note
+                  </h4>
+                  <form className="space-y-4" onSubmit={handleAddTastingNote}>
+                    <div className="grid md:grid-cols-4 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="tasting-date">Recorded on</Label>
+                        <Input
+                          id="tasting-date"
+                          type="date"
+                          value={newTastingNote.recorded_at}
+                          onChange={(e) => setNewTastingNote({ ...newTastingNote, recorded_at: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Sweetness</Label>
+                        <Select
+                          value={String(newTastingNote.sweetness)}
+                          onValueChange={(value) => setNewTastingNote({ ...newTastingNote, sweetness: Number(value) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Sweetness" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {sensoryScale.map((level) => (
+                              <SelectItem key={level} value={String(level)}>
+                                {level}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Acidity</Label>
+                        <Select
+                          value={String(newTastingNote.acidity)}
+                          onValueChange={(value) => setNewTastingNote({ ...newTastingNote, acidity: Number(value) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Acidity" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {sensoryScale.map((level) => (
+                              <SelectItem key={level} value={String(level)}>
+                                {level}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Body</Label>
+                        <Select
+                          value={String(newTastingNote.body)}
+                          onValueChange={(value) => setNewTastingNote({ ...newTastingNote, body: Number(value) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Body" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {sensoryScale.map((level) => (
+                              <SelectItem key={level} value={String(level)}>
+                                {level}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="tasting-aroma">Aroma</Label>
+                        <Textarea
+                          id="tasting-aroma"
+                          value={newTastingNote.aroma}
+                          onChange={(e) => setNewTastingNote({ ...newTastingNote, aroma: e.target.value })}
+                          rows={2}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="tasting-flavor">Flavor</Label>
+                        <Textarea
+                          id="tasting-flavor"
+                          value={newTastingNote.flavor}
+                          onChange={(e) => setNewTastingNote({ ...newTastingNote, flavor: e.target.value })}
+                          rows={2}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="tasting-finish">Finish</Label>
+                        <Textarea
+                          id="tasting-finish"
+                          value={newTastingNote.finish}
+                          onChange={(e) => setNewTastingNote({ ...newTastingNote, finish: e.target.value })}
+                          rows={2}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="tasting-notes">Additional Notes</Label>
+                      <Textarea
+                        id="tasting-notes"
+                        value={newTastingNote.notes}
+                        onChange={(e) => setNewTastingNote({ ...newTastingNote, notes: e.target.value })}
+                        placeholder="Pairing ideas, stylistic comments, adjustments..."
+                        rows={3}
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <Button type="submit" disabled={createTastingNoteMutation.isPending}>
+                        {createTastingNoteMutation.isPending ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Saving...
+                          </>
+                        ) : (
+                          'Save tasting note'
+                        )}
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <Star className="h-4 w-4 text-primary" />
+                    Recorded notes
+                  </h4>
+                  {tastingNotesLoading ? (
+                    <div className="flex justify-center py-6">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : tastingNotes.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No tasting notes recorded for this batch yet.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                      {tastingNotes.map((note) => {
+                        const profile: string[] = [];
+                        if (typeof note.sweetness === 'number') profile.push(`Sweetness ${note.sweetness}/5`);
+                        if (typeof note.acidity === 'number') profile.push(`Acidity ${note.acidity}/5`);
+                        if (typeof note.body === 'number') profile.push(`Body ${note.body}/5`);
+
+                        return (
+                          <div key={note.id} className="border rounded-lg p-4 bg-muted/40">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium">{format(new Date(note.recorded_at), 'MMM d, yyyy')}</p>
+                                {profile.length > 0 && (
+                                  <p className="text-sm text-muted-foreground">{profile.join(' • ')}</p>
+                                )}
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  if (!selectedBatchId) return;
+                                  deleteTastingNoteMutation.mutate({ id: note.id, batchId: selectedBatchId });
+                                }}
+                                disabled={deleteTastingNoteMutation.isPending && deletingTastingId === note.id}
+                              >
+                                {deleteTastingNoteMutation.isPending && deletingTastingId === note.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </div>
+                            <div className="mt-2 space-y-1 text-sm">
+                              {note.aroma && <p><span className="font-medium">Aroma:</span> {note.aroma}</p>}
+                              {note.flavor && <p><span className="font-medium">Flavor:</span> {note.flavor}</p>}
+                              {note.finish && <p><span className="font-medium">Finish:</span> {note.finish}</p>}
+                              {note.notes && <p className="text-muted-foreground">{note.notes}</p>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* PACKAGING TAB */}
+              <TabsContent value="packaging" className="space-y-6">
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <ClipboardList className="h-4 w-4 text-primary" />
+                    Schedule packaging
+                  </h4>
+                  <form className="space-y-4" onSubmit={handleAddPackagingPlan}>
+                    <div className="grid md:grid-cols-4 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="packaging-date">Target date</Label>
+                        <Input
+                          id="packaging-date"
+                          type="date"
+                          value={newPackagingPlan.target_date}
+                          onChange={(e) => setNewPackagingPlan({ ...newPackagingPlan, target_date: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="packaging-format">Format</Label>
+                        <Select
+                          value={newPackagingPlan.format}
+                          onValueChange={(value) => setNewPackagingPlan({ ...newPackagingPlan, format: value as PackagingSchedule['format'] })}
+                        >
+                          <SelectTrigger id="packaging-format">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {packagingFormats.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="packaging-quantity">Quantity</Label>
+                        <Input
+                          id="packaging-quantity"
+                          type="number"
+                          min="0"
+                          value={newPackagingPlan.quantity === '' ? '' : newPackagingPlan.quantity}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setNewPackagingPlan({ ...newPackagingPlan, quantity: '' });
+                              return;
+                            }
+                            const parsed = Number(value);
+                            if (Number.isFinite(parsed)) {
+                              setNewPackagingPlan({ ...newPackagingPlan, quantity: parsed });
+                            }
+                          }}
+                          placeholder="240"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="packaging-notes">Notes</Label>
+                        <Textarea
+                          id="packaging-notes"
+                          value={newPackagingPlan.notes}
+                          onChange={(e) => setNewPackagingPlan({ ...newPackagingPlan, notes: e.target.value })}
+                          rows={2}
+                          placeholder="Labeling, delivery logistics, packaging line..."
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button type="submit" disabled={createPackagingScheduleMutation.isPending}>
+                        {createPackagingScheduleMutation.isPending ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Saving...
+                          </>
+                        ) : (
+                          'Add to schedule'
+                        )}
+                      </Button>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2">
+                    <CalendarCheck className="h-4 w-4 text-primary" />
+                    Packaging roadmap
+                  </h4>
+                  {packagingSchedulesLoading ? (
+                    <div className="flex justify-center py-6">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : packagingSchedules.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No packaging timeline for this batch yet.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                      {packagingSchedules.map((schedule) => {
+                        const completed = Boolean(schedule.completed_at);
+                        return (
+                          <div key={schedule.id} className="border rounded-lg p-4 bg-muted/40 space-y-2">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-medium">{format(new Date(schedule.target_date), 'MMM d, yyyy')}</p>
+                                <p className="text-sm text-muted-foreground capitalize">
+                                  {schedule.format.replace('-', ' ')}
+                                  {typeof schedule.quantity === 'number' ? ` • ${schedule.quantity} units` : ''}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Badge variant={completed ? 'secondary' : 'outline'}>
+                                  {completed
+                                    ? `Completed ${format(new Date(schedule.completed_at as string), 'MMM d, yyyy')}`
+                                    : 'Scheduled'}
+                                </Badge>
+                                {!completed && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleMarkPackagingComplete(schedule)}
+                                    disabled={updatePackagingScheduleMutation.isPending && completingScheduleId === schedule.id}
+                                  >
+                                    {updatePackagingScheduleMutation.isPending && completingScheduleId === schedule.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      'Mark complete'
+                                    )}
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => {
+                                    if (!selectedBatchId) return;
+                                    deletePackagingScheduleMutation.mutate({ id: schedule.id, batchId: selectedBatchId });
+                                  }}
+                                  disabled={deletePackagingScheduleMutation.isPending && deletingScheduleId === schedule.id}
+                                >
+                                  {deletePackagingScheduleMutation.isPending && deletingScheduleId === schedule.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                            {schedule.notes && <p className="text-sm text-foreground/90">{schedule.notes}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </TabsContent>
 
