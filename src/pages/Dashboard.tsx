@@ -48,7 +48,9 @@ type Organization = Tables<'organizations'>;
 
 type MemberRole = 'owner' | 'admin' | 'member';
 
-type OrganizationMembership = Tables<'organization_members'> & {
+type OrganizationMembership = {
+  organization_id: string;
+  role: MemberRole;
   organizations: Organization;
 };
 
@@ -57,36 +59,6 @@ type BatchFormState = {
   variety: string;
   volume: number | '';
   start_date: string;
-};
-
-type FermentationLog = Tables<'fermentation_logs'>;
-type TastingNote = Tables<'tasting_notes'>;
-type PackagingSchedule = Tables<'packaging_schedules'>;
-
-type FermentationFormState = {
-  recorded_at: string;
-  temperature: number | '';
-  specific_gravity: number | '';
-  ph: number | '';
-  notes: string;
-};
-
-type TastingFormState = {
-  recorded_at: string;
-  sweetness: number | '';
-  acidity: number | '';
-  body: number | '';
-  aroma: string;
-  flavor: string;
-  finish: string;
-  notes: string;
-};
-
-type PackagingFormState = {
-  target_date: string;
-  format: PackagingSchedule['format'];
-  quantity: number | '';
-  notes: string;
 };
 
 export default function Dashboard() {
@@ -187,7 +159,9 @@ export default function Dashboard() {
   const [stageFilter, setStageFilter] = useState<'all' | BatchStage>('all');
   const [sortBy, setSortBy] = useState('newest');
   const [operationLoading, setOperationLoading] = useState<string | null>(null);
-  const [newFermentationLog, setNewFermentationLog] = useState<FermentationFormState>({
+  
+  // Advanced features temporarily disabled - will be added later
+  /* const [newFermentationLog, setNewFermentationLog] = useState<FermentationFormState>({
     recorded_at: new Date().toISOString().split('T')[0],
     temperature: '',
     specific_gravity: '',

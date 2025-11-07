@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import {
-  ArrowLeft, User, Building2, Shield, Trash2,
+  ArrowLeft, User as UserIcon, Building2, Shield, Trash2,
   Edit, Mail, Lock, Users, AlertTriangle, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -24,14 +24,16 @@ type Organization = Tables<'organizations'>;
 
 type MemberRole = 'owner' | 'admin' | 'member';
 
-type OrganizationMembership = Tables<'organization_members'> & {
+type OrganizationMembership = {
+  organization_id: string;
+  role: MemberRole;
   organizations: Organization;
 };
 
 type MemberWithProfile = Tables<'organization_members'> & {
-  users: {
-    email: string;
-    user_metadata: { full_name?: string | null } | null;
+  users?: {
+    email?: string;
+    user_metadata?: { full_name?: string };
   } | null;
 };
 
@@ -105,12 +107,7 @@ export default function Settings() {
       if (!organizationId) return [];
       const { data, error } = await supabase
         .from('organization_members')
-        .select(`
-          id,
-          role,
-          user_id,
-          users:user_id (email, user_metadata)
-        `)
+        .select('*')
         .eq('organization_id', organizationId);
 
       if (error) throw error;
@@ -451,7 +448,7 @@ export default function Settings() {
         <Tabs defaultValue="profile" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="profile">
-              <User className="h-4 w-4 mr-2" />
+              <UserIcon className="h-4 w-4 mr-2" />
               Profile
             </TabsTrigger>
             <TabsTrigger value="organization">
@@ -629,10 +626,9 @@ export default function Settings() {
                       <div className="flex items-center gap-3">
                         <Users className="h-4 w-4 text-muted-foreground" />
                         <div>
-                          <p className="text-sm font-medium">
-                            {member.users?.user_metadata?.full_name || 'Unknown'}
+                          <p className="text-sm font-medium text-muted-foreground">
+                            User ID: {member.user_id?.slice(0, 8)}...
                           </p>
-                          <p className="text-xs text-muted-foreground">{member.users?.email}</p>
                         </div>
                       </div>
                       <span className="text-xs px-2 py-1 bg-background rounded-md capitalize">
