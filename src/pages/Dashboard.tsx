@@ -161,14 +161,14 @@ export default function Dashboard() {
   const [operationLoading, setOperationLoading] = useState<string | null>(null);
   
   // Advanced features temporarily disabled - will be added later
-  /* const [newFermentationLog, setNewFermentationLog] = useState<FermentationFormState>({
+  const [newFermentationLog, setNewFermentationLog] = useState({
     recorded_at: new Date().toISOString().split('T')[0],
     temperature: '',
     specific_gravity: '',
     ph: '',
     notes: '',
   });
-  const [newTastingNote, setNewTastingNote] = useState<TastingFormState>({
+  const [newTastingNote, setNewTastingNote] = useState({
     recorded_at: new Date().toISOString().split('T')[0],
     sweetness: 3,
     acidity: 3,
@@ -178,9 +178,9 @@ export default function Dashboard() {
     finish: '',
     notes: '',
   });
-  const [newPackagingPlan, setNewPackagingPlan] = useState<PackagingFormState>({
+  const [newPackagingPlan, setNewPackagingPlan] = useState({
     target_date: new Date().toISOString().split('T')[0],
-    format: 'bottle',
+    format: 'bottle' as 'bottle' | 'can' | 'keg' | 'bag-in-box' | 'growler' | 'other',
     quantity: '',
     notes: '',
   });
