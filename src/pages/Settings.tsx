@@ -19,6 +19,27 @@ import { format } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { User } from '@supabase/supabase-js';
 import type { Tables, TablesUpdate } from '@/integrations/supabase/types';
+import { z } from 'zod';
+
+// Zod validation schemas
+const nameSchema = z.string().trim().min(1, "Name cannot be empty").max(100, "Name must be less than 100 characters");
+
+const organizationSchema = z.object({
+  name: z.string().trim().min(1, "Organization name cannot be empty").max(100, "Organization name must be less than 100 characters"),
+});
+
+const passwordSchema = z.object({
+  current: z.string().min(6, "Current password must be at least 6 characters"),
+  new: z.string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+    .regex(/[0-9]/, "Password must contain at least one number"),
+  confirm: z.string(),
+}).refine((data) => data.new === data.confirm, {
+  message: "Passwords do not match",
+  path: ["confirm"],
+});
 
 type Organization = Tables<'organizations'>;
 
@@ -276,18 +297,20 @@ export default function Settings() {
   });
 
   function updateName() {
-    const trimmedName = fullName.trim();
-    if (!trimmedName) {
+    // Validate name using Zod
+    const validation = nameSchema.safeParse(fullName);
+    
+    if (!validation.success) {
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'Name cannot be empty.',
+        title: 'Validation Error',
+        description: validation.error.errors[0].message,
       });
       return;
     }
 
-    setFullName(trimmedName);
-    updateNameMutation.mutate(trimmedName);
+    setFullName(validation.data);
+    updateNameMutation.mutate(validation.data);
   }
 
   function updateOrganization() {
@@ -300,47 +323,37 @@ export default function Settings() {
       return;
     }
 
-    const trimmedName = orgName.trim();
-    if (!trimmedName) {
+    // Validate organization data using Zod
+    const validation = organizationSchema.safeParse({
+      name: orgName,
+    });
+
+    if (!validation.success) {
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'Organization name cannot be empty.',
+        title: 'Validation Error',
+        description: validation.error.errors[0].message,
       });
       return;
     }
 
-    setOrgName(trimmedName);
+    setOrgName(validation.data.name);
     updateOrganizationMutation.mutate({
       organizationId,
-      updates: { name: trimmedName },
+      updates: { name: validation.data.name },
     });
   }
 
   function changePassword() {
-    if (passwords.new !== passwords.confirm) {
+    // Validate password data using Zod
+    const validation = passwordSchema.safeParse(passwords);
+
+    if (!validation.success) {
+      const firstError = validation.error.errors[0];
       toast({
         variant: "destructive",
-        title: "Error",
-        description: "New passwords don't match",
-      });
-      return;
-    }
-
-    if (passwords.new.length < 6) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Password must be at least 6 characters",
-      });
-      return;
-    }
-
-    if (!passwords.current) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Please enter your current password.',
+        title: "Validation Error",
+        description: firstError.message,
       });
       return;
     }
@@ -355,8 +368,8 @@ export default function Settings() {
     }
 
     changePasswordMutation.mutate({
-      currentPassword: passwords.current,
-      newPassword: passwords.new,
+      currentPassword: validation.data.current,
+      newPassword: validation.data.new,
       email: user.email,
     });
   }

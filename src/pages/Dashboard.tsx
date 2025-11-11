@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { z } from 'zod';
 import {
   Wine,
   Plus,
@@ -53,6 +54,14 @@ type BatchFormState = {
   volume: number | '';
   start_date: string;
 };
+
+// Zod validation schemas
+const batchSchema = z.object({
+  name: z.string().trim().min(1, "Batch name is required").max(100, "Batch name must be less than 100 characters"),
+  variety: z.string().trim().min(1, "Apple variety is required").max(100, "Variety must be less than 100 characters"),
+  volume: z.number().positive("Volume must be a positive number").max(1000000, "Volume must be less than 1,000,000 liters"),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format"),
+});
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -299,22 +308,31 @@ export default function Dashboard() {
       return;
     }
 
-    if (typeof newBatch.volume !== 'number' || !Number.isFinite(newBatch.volume)) {
+    // Validate input using Zod
+    const validation = batchSchema.safeParse({
+      name: newBatch.name,
+      variety: newBatch.variety,
+      volume: newBatch.volume,
+      start_date: newBatch.start_date,
+    });
+
+    if (!validation.success) {
+      const firstError = validation.error.errors[0];
       toast({
         variant: 'destructive',
-        title: 'Invalid volume',
-        description: 'Please enter a valid numeric volume for the batch.',
+        title: 'Validation Error',
+        description: firstError.message,
       });
       return;
     }
 
     createBatchMutation.mutate({
-      name: newBatch.name,
-      variety: newBatch.variety,
-      volume: newBatch.volume,
+      name: validation.data.name,
+      variety: validation.data.variety,
+      volume: validation.data.volume,
       organization_id: organizationId,
       current_stage: 'pressing',
-      start_date: newBatch.start_date,
+      start_date: validation.data.start_date,
       created_by: user.id,
     });
   }
@@ -900,11 +918,20 @@ export default function Dashboard() {
                   <Button
                     onClick={async () => {
                       if (!organizationId) return;
-                      if (typeof editFormData.volume !== 'number' || !Number.isFinite(editFormData.volume)) {
+                      
+                      // Validate input using Zod
+                      const validation = batchSchema.omit({ start_date: true }).safeParse({
+                        name: editFormData.name,
+                        variety: editFormData.variety,
+                        volume: editFormData.volume,
+                      });
+
+                      if (!validation.success) {
+                        const firstError = validation.error.errors[0];
                         toast({
                           variant: 'destructive',
-                          title: 'Invalid volume',
-                          description: 'Please enter a valid numeric volume.',
+                          title: 'Validation Error',
+                          description: firstError.message,
                         });
                         return;
                       }
@@ -913,9 +940,9 @@ export default function Dashboard() {
                         batchId: selectedBatch.id,
                         organizationId,
                         updates: {
-                          name: editFormData.name,
-                          variety: editFormData.variety,
-                          volume: editFormData.volume,
+                          name: validation.data.name,
+                          variety: validation.data.variety,
+                          volume: validation.data.volume,
                           start_date: editFormData.start_date,
                         },
                       });

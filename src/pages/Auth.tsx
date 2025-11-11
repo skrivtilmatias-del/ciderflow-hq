@@ -6,6 +6,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { z } from 'zod';
+
+// Zod validation schemas
+const signUpSchema = z.object({
+  email: z.string().trim().email("Invalid email address").max(255, "Email must be less than 255 characters"),
+  password: z.string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+    .regex(/[0-9]/, "Password must contain at least one number"),
+  fullName: z.string().trim().min(1, "Full name is required").max(100, "Name must be less than 100 characters"),
+});
+
+const signInSchema = z.object({
+  email: z.string().trim().email("Invalid email address").max(255, "Email must be less than 255 characters"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -21,6 +38,32 @@ export default function Auth() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate input using Zod
+    if (isSignUp) {
+      const validation = signUpSchema.safeParse(formData);
+      if (!validation.success) {
+        const firstError = validation.error.errors[0];
+        toast({
+          variant: "destructive",
+          title: "Validation Error",
+          description: firstError.message,
+        });
+        return;
+      }
+    } else {
+      const validation = signInSchema.safeParse(formData);
+      if (!validation.success) {
+        const firstError = validation.error.errors[0];
+        toast({
+          variant: "destructive",
+          title: "Validation Error",
+          description: firstError.message,
+        });
+        return;
+      }
+    }
+    
     setLoading(true);
 
     try {
@@ -150,7 +193,7 @@ export default function Auth() {
               </div>
               {isSignUp && (
                 <p className="text-sm text-muted-foreground">
-                  Must be at least 6 characters
+                  Must be at least 8 characters, include uppercase, lowercase, and a number
                 </p>
               )}
             </div>

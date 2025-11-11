@@ -7,6 +7,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
+import { z } from 'zod';
+
+// Zod validation schema
+const organizationSchema = z.object({
+  name: z.string().trim().min(1, "Organization name is required").max(100, "Organization name must be less than 100 characters"),
+  size: z.enum(['small', 'medium', 'large', 'enterprise']),
+});
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -20,6 +27,19 @@ export default function Onboarding() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate input using Zod
+    const validation = organizationSchema.safeParse(orgData);
+    if (!validation.success) {
+      const firstError = validation.error.errors[0];
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: firstError.message,
+      });
+      return;
+    }
+    
     setLoading(true);
 
     try {
@@ -34,9 +54,9 @@ export default function Onboarding() {
         .from('organizations')
         .insert([
           {
-            name: orgData.name,
+            name: validation.data.name,
             owner_id: user.id,
-            team_size: orgData.size
+            team_size: validation.data.size
           }
         ])
         .select()
