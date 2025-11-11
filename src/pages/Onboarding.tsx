@@ -62,7 +62,8 @@ export default function Onboarding() {
         description: "Your organization has been created.",
       });
 
-      navigate('/dashboard');
+      // Force a full page reload to update App.tsx state
+      window.location.href = '/dashboard';
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create organization';
       toast({
